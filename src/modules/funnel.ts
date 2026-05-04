@@ -37,13 +37,15 @@ export async function runFunnel(
 
   const fb = new FbClient(env);
   const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';
-  const dmBody = match.dm_template.replace('{name}', firstName);
+  // Templates stored in DB use literal '\n' chars (SQL doesn't unescape) — convert to real newlines.
+  const dmBody = match.dm_template.replace('{name}', firstName).replace(/\\n/g, '\n');
+  const publicText = (match.reply_public ?? '').replace(/\\n/g, '\n');
 
   // 1. Public reply (creates social proof + tells user to check inbox)
   let publicReplyId: string | undefined;
-  if (match.reply_public) {
+  if (publicText) {
     try {
-      const r = await fb.replyComment(event.commentId, match.reply_public);
+      const r = await fb.replyComment(event.commentId, publicText);
       publicReplyId = r.id;
     } catch (err) {
       console.error('funnel public reply failed', String(err));
@@ -67,7 +69,7 @@ export async function runFunnel(
     await env.DB.prepare(
       `UPDATE comments SET bot_replied = 1, bot_reply_id = ?, bot_reply_text = ?, bot_reply_time = ? WHERE id = ?`,
     )
-      .bind(publicReplyId, match.reply_public, Math.floor(Date.now() / 1000), event.commentId)
+      .bind(publicReplyId, publicText, Math.floor(Date.now() / 1000), event.commentId)
       .run();
   }
 

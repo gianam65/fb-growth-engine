@@ -45,7 +45,7 @@ export async function runVelocity(
 
   const tpl = await pickTemplate(env, intent);
   if (!tpl) return;
-  const text = tpl.replace('{name}', event.fromName?.split(' ')[0] ?? 'bạn');
+  const text = tpl.replace('{name}', event.fromName?.split(' ')[0] ?? 'bạn').replace(/\\n/g, '\n');
 
   // Random delay 30-90s to look natural. Workers can't sleep that long in a
   // single request — schedule via setTimeout-like pattern using waitUntil isn't
