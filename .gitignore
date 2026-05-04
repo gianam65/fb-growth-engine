@@ -3,6 +3,8 @@ node_modules/
 .dev.vars
 .env
 .env.local
+.env.vault
+secrets.txt
 *.log
 dist/
 .DS_Store
