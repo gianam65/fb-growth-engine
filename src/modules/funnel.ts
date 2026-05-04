@@ -19,32 +19,7 @@ export async function runFunnel(
   const match = (triggers.results ?? []).find((t) => lower.includes(t.keyword.toLowerCase()));
   if (!match) return false;
 
-  const fb = new FbClient(env);
-  const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';
-  const dmBody = match.dm_template.replace('{name}', firstName);
-
-  // 1. Public reply (creates social proof + tells user to check inbox)
-  if (match.reply_public) {
-    try {
-      await fb.replyComment(event.commentId, match.reply_public);
-    } catch (err) {
-      console.error('funnel public reply failed', String(err));
-    }
-  }
-
-  // 2. Private reply via Send API (uses comment_id, opens 24h window)
-  let messageId: string | undefined;
-  try {
-    const sent = await fb.sendPrivateReplyToComment(event.commentId, dmBody);
-    messageId = sent.message_id;
-  } catch (err) {
-    // Common failures: page lacks pages_messaging perm in dev mode for non-admins,
-    // user has previously blocked the page, comment older than 7 days
-    console.error('funnel private reply failed', String(err));
-    return true; // still mark as handled — don't fall through to velocity
-  }
-
-  // 3. Log the conversion event
+  // Log the comment first so we have a record even if FB API calls fail.
   await env.DB.prepare(
     `INSERT OR IGNORE INTO comments (id, post_id, parent_id, from_id, from_name, message, created_time, intent)
      VALUES (?, ?, ?, ?, ?, ?, ?, 'PRICE')`,
@@ -60,6 +35,42 @@ export async function runFunnel(
     )
     .run();
 
+  const fb = new FbClient(env);
+  const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';
+  const dmBody = match.dm_template.replace('{name}', firstName);
+
+  // 1. Public reply (creates social proof + tells user to check inbox)
+  let publicReplyId: string | undefined;
+  if (match.reply_public) {
+    try {
+      const r = await fb.replyComment(event.commentId, match.reply_public);
+      publicReplyId = r.id;
+    } catch (err) {
+      console.error('funnel public reply failed', String(err));
+    }
+  }
+
+  // 2. Private reply via Send API (uses comment_id, opens 24h window)
+  let messageId: string | undefined;
+  try {
+    const sent = await fb.sendPrivateReplyToComment(event.commentId, dmBody);
+    messageId = sent.message_id;
+  } catch (err) {
+    // Common failures: page lacks pages_messaging perm in dev mode for non-admins,
+    // user has previously blocked the page, comment older than 7 days,
+    // fake comment id (test webhook script).
+    console.error('funnel private reply failed', String(err));
+  }
+
+  // Update comment record with bot_replied flag and reply id
+  if (publicReplyId) {
+    await env.DB.prepare(
+      `UPDATE comments SET bot_replied = 1, bot_reply_id = ?, bot_reply_text = ?, bot_reply_time = ? WHERE id = ?`,
+    )
+      .bind(publicReplyId, match.reply_public, Math.floor(Date.now() / 1000), event.commentId)
+      .run();
+  }
+
   if (messageId) {
     await env.DB.prepare(
       `INSERT OR IGNORE INTO messages (id, thread_id, direction, source, comment_id, text, sent_at)
@@ -69,7 +80,7 @@ export async function runFunnel(
       .run();
   }
 
-  // 4. Upsert lead
+  // Upsert lead regardless of FB API outcome — we still know they expressed intent.
   await env.DB.prepare(
     `INSERT INTO leads (psid, name, source_post_id, source_comment_id, first_intent)
      VALUES (?, ?, ?, ?, 'PRICE')
