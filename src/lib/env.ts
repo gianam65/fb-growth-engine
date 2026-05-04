@@ -1,7 +1,6 @@
 export interface Env {
   // Bindings
   DB: D1Database;
-  MEDIA: R2Bucket;
   EVENTS: Queue<FbEvent>;
 
   // Vars

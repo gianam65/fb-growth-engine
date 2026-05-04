@@ -1,7 +1,11 @@
 # fb-growth-engine
 
 Free-tier organic growth automation for a Facebook Page. TypeScript, runs on
-Cloudflare Workers + D1 + R2 + Queues + GitHub Actions. No paid services.
+Cloudflare Workers + D1 + Queues + GitHub Actions. No paid services, no card.
+
+Reels videos are stored in the repo under `reels-source/` — GitHub Actions
+checks out the repo and POSTs bytes directly to FB Reels API. No external
+storage needed.
 
 ## Modules
 
@@ -32,7 +36,9 @@ Cross-cutting: daily insights pull → Telegram report; intent classification vi
 
 ### 1. Cloudflare account
 - Sign up at https://dash.cloudflare.com (no card required)
-- Workers, D1, R2, Queues are all free tier
+- Workers, D1, Queues are all free tier
+- (R2 was originally planned for video storage but it now requires a payment
+  method on file. We dropped R2 and store videos in the repo instead.)
 
 ### 2. Facebook App + Page Access Token
 - https://developers.facebook.com → My Apps → Create App → **Business** type
@@ -76,19 +82,14 @@ npx wrangler login
 npx wrangler d1 create fb-growth
 # → paste the id into wrangler.toml under [[d1_databases]] database_id
 
-# 2. Create R2 bucket
-npx wrangler r2 bucket create fb-growth-media
-# Optional: enable public access for the bucket so FB can fetch reel videos
-# (Cloudflare dashboard → R2 → bucket → Settings → Public access → Allow)
-
-# 3. Create the queue + DLQ
+# 2. Create the queue + DLQ
 npx wrangler queues create fb-growth-events
 npx wrangler queues create fb-growth-events-dlq
 
-# 4. Apply migrations to remote D1
+# 3. Apply migrations to remote D1
 npm run db:migrate:remote
 
-# 5. Set Worker secrets
+# 4. Set Worker secrets
 npx wrangler secret put FB_APP_SECRET
 npx wrangler secret put FB_VERIFY_TOKEN          # any random string, save it
 npx wrangler secret put FB_PAGE_ACCESS_TOKEN
@@ -97,11 +98,11 @@ npx wrangler secret put GEMINI_API_KEY
 npx wrangler secret put TELEGRAM_BOT_TOKEN
 npx wrangler secret put TELEGRAM_CHAT_ID
 
-# 6. Deploy
+# 5. Deploy
 npm run deploy
 # → outputs your https://<name>.<sub>.workers.dev URL
 
-# 7. Health check
+# 6. Health check
 curl https://<your-url>/health
 # → "ok"
 ```
@@ -119,7 +120,6 @@ Push the repo to GitHub (public — for unlimited Actions minutes), then add
 | `FB_PAGE_ACCESS_TOKEN` | (same as Worker secret) |
 | `FB_PAGE_ID` | (same) |
 | `GEMINI_API_KEY` | (same) |
-| `R2_ACCOUNT_ID` | Cloudflare → R2 → public bucket id (the part before `.r2.dev`) |
 | `TELEGRAM_BOT_TOKEN` | (same) |
 | `TELEGRAM_CHAT_ID` | (same) |
 
@@ -142,16 +142,19 @@ point the FB webhook to a temporary URL via `cloudflared tunnel` (free).
 ## Operating it
 
 ### Add Reels to the publish queue
-Insert manually for now — automate later:
+
+1. Drop the `.mp4` into `reels-source/` (commit + push)
+2. Insert a queue row pointing at the relative path:
 ```bash
 npx wrangler d1 execute fb-growth --remote --command "
-  INSERT INTO reels_queue (r2_key, caption, hashtags, scheduled_at)
-  VALUES ('https://your-public-url/video.mp4',
+  INSERT INTO reels_queue (video_path, caption, hashtags, scheduled_at)
+  VALUES ('reels-source/2026-05-decor-set-01.mp4',
           'caption text here',
           '#decor #nhaxinh',
           unixepoch() + 3600);
 "
 ```
+The cron picks it up within 5 min. After it succeeds you can `git rm` the file.
 
 ### Tune funnel keywords
 ```bash

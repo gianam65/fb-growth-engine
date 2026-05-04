@@ -7,13 +7,8 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "fb-growth"
-database_id = "REPLACE_WITH_D1_ID_AFTER_CREATE"
+database_id = "ea2ab248-c877-4f2b-91ac-932e2a52f781"
 migrations_dir = "migrations"
-
-# R2 bucket for media (Reels videos before upload to FB)
-[[r2_buckets]]
-binding = "MEDIA"
-bucket_name = "fb-growth-media"
 
 # Queue producer (webhook → push events)
 [[queues.producers]]

@@ -46,10 +46,14 @@ CREATE TABLE IF NOT EXISTS leads (
 );
 CREATE INDEX IF NOT EXISTS idx_leads_status ON leads(status);
 
--- Reels publish queue (filled manually or by upload script, drained by GH Action cron)
+-- Reels publish queue (filled manually, drained by GH Action cron).
+-- video_path is either:
+--   (a) a path relative to repo root, e.g. "reels-source/feb-decor-01.mp4"
+--       → upload script reads file and POSTs bytes directly to FB
+--   (b) a public URL (https://...) → FB pulls the video itself
 CREATE TABLE IF NOT EXISTS reels_queue (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
-  r2_key          TEXT NOT NULL,              -- key in R2 bucket
+  video_path      TEXT NOT NULL,
   caption         TEXT,
   hashtags        TEXT,
   scheduled_at    INTEGER NOT NULL,           -- epoch seconds

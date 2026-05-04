@@ -15,10 +15,6 @@ export interface ScriptEnv {
   GEMINI_MODEL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   TELEGRAM_CHAT_ID?: string;
-  R2_ACCOUNT_ID?: string;
-  R2_ACCESS_KEY_ID?: string;
-  R2_SECRET_ACCESS_KEY?: string;
-  R2_BUCKET?: string;
 }
 
 export function loadEnv(): ScriptEnv {
@@ -38,7 +34,7 @@ export function loadEnv(): ScriptEnv {
     out[k] = v;
   }
   // Optional
-  for (const k of ['GEMINI_MODEL', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID', 'R2_ACCOUNT_ID', 'R2_ACCESS_KEY_ID', 'R2_SECRET_ACCESS_KEY', 'R2_BUCKET']) {
+  for (const k of ['GEMINI_MODEL', 'TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']) {
     if (process.env[k]) out[k] = process.env[k]!;
   }
   return out as unknown as ScriptEnv;
