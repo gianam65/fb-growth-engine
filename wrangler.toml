@@ -1,0 +1,45 @@
+name = "fb-growth-engine"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+
+# D1 database binding
+[[d1_databases]]
+binding = "DB"
+database_name = "fb-growth"
+database_id = "REPLACE_WITH_D1_ID_AFTER_CREATE"
+migrations_dir = "migrations"
+
+# R2 bucket for media (Reels videos before upload to FB)
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "fb-growth-media"
+
+# Queue producer (webhook → push events)
+[[queues.producers]]
+binding = "EVENTS"
+queue = "fb-growth-events"
+
+# Queue consumer (process events asynchronously)
+[[queues.consumers]]
+queue = "fb-growth-events"
+max_batch_size = 10
+max_batch_timeout = 5
+max_retries = 3
+dead_letter_queue = "fb-growth-events-dlq"
+
+# Vars (non-secret)
+[vars]
+FB_GRAPH_VERSION = "v21.0"
+GEMINI_MODEL = "gemini-1.5-flash-latest"
+LOG_LEVEL = "info"
+
+# Secrets are set via: wrangler secret put <NAME>
+# Required secrets:
+#   FB_APP_SECRET            — for webhook signature verification
+#   FB_VERIFY_TOKEN          — random string you choose, must match FB webhook config
+#   FB_PAGE_ACCESS_TOKEN     — long-lived page token
+#   FB_PAGE_ID               — your page ID
+#   GEMINI_API_KEY           — Google AI Studio key
+#   TELEGRAM_BOT_TOKEN       — for daily reports
+#   TELEGRAM_CHAT_ID         — your chat ID for receiving alerts

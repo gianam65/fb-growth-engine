@@ -1,0 +1,28 @@
+{
+  "name": "fb-growth-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "tail": "wrangler tail",
+    "db:migrate:local": "wrangler d1 migrations apply fb-growth --local",
+    "db:migrate:remote": "wrangler d1 migrations apply fb-growth --remote",
+    "db:console": "wrangler d1 execute fb-growth --remote --command",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p scripts/tsconfig.json",
+    "test": "vitest run",
+    "script:upload-reel": "tsx scripts/upload-reel.ts",
+    "script:pull-insights": "tsx scripts/pull-insights.ts",
+    "script:daily-report": "tsx scripts/daily-report.ts"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250109.0",
+    "@types/node": "^22.10.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "wrangler": "^3.99.0"
+  }
+}

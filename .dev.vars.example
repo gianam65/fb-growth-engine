@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local development. NEVER commit .dev.vars.
+FB_APP_SECRET=
+FB_VERIFY_TOKEN=choose-any-random-string
+FB_PAGE_ACCESS_TOKEN=
+FB_PAGE_ID=
+GEMINI_API_KEY=
+TELEGRAM_BOT_TOKEN=
+TELEGRAM_CHAT_ID=
