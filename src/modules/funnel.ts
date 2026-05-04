@@ -41,6 +41,9 @@ export async function runFunnel(
   const dmBody = match.dm_template.replace('{name}', firstName).replace(/\\n/g, '\n');
   const publicText = (match.reply_public ?? '').replace(/\\n/g, '\n');
 
+  // Random 5-25s delay before public reply so FB doesn't flag it as instant spam.
+  await new Promise((r) => setTimeout(r, 5000 + Math.floor(Math.random() * 20000)));
+
   // 1. Public reply (creates social proof + tells user to check inbox)
   let publicReplyId: string | undefined;
   if (publicText) {

@@ -53,6 +53,9 @@ export async function runVelocity(
   // because the queue itself adds 1-5s latency, and Workers don't replicate
   // human typing time anyway. Algorithm only cares about engagement *within*
   // the early window (first ~30 min), not millisecond timing.
+  // Random 5-25s sleep so the reply doesn't look like an instant bot to FB's
+  // spam filter (which has been observed to hide instant page replies).
+  await new Promise((r) => setTimeout(r, 5000 + Math.floor(Math.random() * 20000)));
   const fb = new FbClient(env);
   try {
     const r = await fb.replyComment(event.commentId, text);
