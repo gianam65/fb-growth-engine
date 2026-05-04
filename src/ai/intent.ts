@@ -36,6 +36,12 @@ export async function classifyIntent(message: string, env: Env): Promise<Intent>
   if (/giá|bao nhiêu|mua|ship|cod|inbox|báo giá|còn không|còn ko|cách đặt/.test(lower)) {
     return 'PRICE';
   }
+  if (/đẹp|xinh|iu|yêu|thích|like|tim|chill|cute|ưng|mê|ghiền|ngầu|đỉnh|tuyệt|wow|❤️|💕|🥰|😍/.test(lower)) {
+    return 'PRAISE';
+  }
+  if (/\?|kích thước|size|chất liệu|material|làm bằng|dùng được|mua ở đâu|có sẵn|còn hàng|màu khác|loại khác/.test(lower)) {
+    return 'QUESTION';
+  }
 
   const start = Date.now();
   let intent: Intent = 'OTHER';

@@ -26,7 +26,7 @@ dead_letter_queue = "fb-growth-events-dlq"
 # Vars (non-secret)
 [vars]
 FB_GRAPH_VERSION = "v21.0"
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 LOG_LEVEL = "info"
 
 # Secrets are set via: wrangler secret put <NAME>
