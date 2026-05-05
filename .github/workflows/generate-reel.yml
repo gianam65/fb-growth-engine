@@ -6,6 +6,17 @@ on:
     # cron picks it up.
     - cron: '0 0 * * *'
   workflow_dispatch:
+    inputs:
+      preview:
+        description: 'Preview mode: generate N images only, no ffmpeg, no enqueue, upload as artifact'
+        required: false
+        default: '0'
+        type: string
+      style_preset:
+        description: 'Style preset (asian-cozy / japandi / kinfolk / rainy-cafe / dark-academia)'
+        required: false
+        default: 'asian-cozy'
+        type: string
 
 concurrency:
   group: generate-reel
@@ -30,7 +41,13 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
       - name: Generate reel
-        run: npm run script:generate-reel -- --schedule-in=900
+        run: |
+          PREVIEW='${{ inputs.preview || '0' }}'
+          if [ "$PREVIEW" != "0" ] && [ -n "$PREVIEW" ]; then
+            npm run script:generate-reel -- --preview=$PREVIEW
+          else
+            npm run script:generate-reel -- --schedule-in=900
+          fi
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
           CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
@@ -40,8 +57,26 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: 'gemini-2.5-flash-lite'
-          # GEMINI_IMAGE_MODEL: leave unset → script tries candidates and resolves dynamically
+          STYLE_PRESET: ${{ inputs.style_preset || 'asian-cozy' }}
+      - name: Collect preview images
+        if: ${{ inputs.preview != '' && inputs.preview != '0' }}
+        run: |
+          mkdir -p preview-out
+          # Find the most recent /tmp/reel-*/ dir created by the script
+          src=$(ls -td /tmp/reel-* 2>/dev/null | head -1)
+          if [ -n "$src" ]; then
+            cp -v "$src"/*.png preview-out/ 2>/dev/null || true
+          fi
+          ls -la preview-out/
+      - name: Upload preview artifact
+        if: ${{ inputs.preview != '' && inputs.preview != '0' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: reel-preview-${{ inputs.style_preset || 'asian-cozy' }}
+          path: preview-out/
+          retention-days: 7
       - name: Commit generated reel
+        if: ${{ inputs.preview == '' || inputs.preview == '0' }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
