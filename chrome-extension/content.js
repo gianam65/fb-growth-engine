@@ -156,13 +156,26 @@
     });
   }
 
-  function tryClickInModal(textKeywords) {
-    // Find any visible button matching keywords (used for Copy/Sao chép inside Shopee's modal)
-    const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"]');
+  const COPY_KEYWORDS = [
+    'sao chép link',
+    'sao chép đường dẫn',
+    'sao chép',
+    'copy link',
+    'copy url',
+    'copy',
+    'sao',
+  ];
+
+  function tryClickInModal(textKeywords = COPY_KEYWORDS) {
+    // Find any visible button matching keywords (Copy/Sao chép inside Shopee's modal)
+    const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"], [class*="btn"], [class*="Button"]');
     for (const btn of allBtns) {
       if (btn.offsetParent === null) continue; // hidden
       const text = visibleText(btn, 30).toLowerCase();
-      if (textKeywords.some((k) => text.includes(k))) {
+      const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const haystack = `${text} ${aria}`;
+      if (!haystack.trim()) continue;
+      if (textKeywords.some((k) => haystack.includes(k))) {
         btn.click();
         return true;
       }
@@ -225,12 +238,21 @@
         const getLinkBtn = findGetLinkButton(card);
         if (getLinkBtn) {
           getLinkBtn.click();
-          try {
-            affUrl = await waitForShopeeUrl(5000);
-          } catch {
-            tryClickInModal(['copy', 'sao chép']);
-            await new Promise((r) => setTimeout(r, 500));
-            affUrl = scanDomForShopeeUrl() || (await readClipboardShopeeUrl());
+          // Brief pause for modal to render, then auto-click Sao chép button
+          await new Promise((r) => setTimeout(r, 400));
+          const copied = tryClickInModal();
+          if (copied) {
+            // Sao chép should put URL on clipboard. Brief wait then read.
+            await new Promise((r) => setTimeout(r, 250));
+            affUrl = (await readClipboardShopeeUrl()) || scanDomForShopeeUrl();
+          }
+          // If still no URL, wait longer in case of network delay
+          if (!affUrl) {
+            try {
+              affUrl = await waitForShopeeUrl(5000);
+            } catch {
+              affUrl = (await readClipboardShopeeUrl()) || null;
+            }
           }
           tryCloseModal();
         }
