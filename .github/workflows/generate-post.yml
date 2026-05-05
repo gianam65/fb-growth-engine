@@ -1,14 +1,13 @@
-name: Generate reel
+name: Generate FB post
 
 on:
-  # Daily cron disabled — pivoted to FB photo carousel post (see generate-post.yml).
-  # Re-enable when paid video gen (fal.ai Wan 2.2 / Veo 3) is in place.
-  # schedule:
-  #   - cron: '0 0 * * *'
+  schedule:
+    # 00:00 UTC = 07:00 Asia/Ho_Chi_Minh
+    - cron: '0 0 * * *'
   workflow_dispatch:
     inputs:
       preview:
-        description: 'Preview mode: generate N images only, no ffmpeg, no enqueue, upload as artifact'
+        description: 'Preview mode: generate N images only (no upload), upload as artifact'
         required: false
         default: '0'
         type: string
@@ -19,11 +18,8 @@ on:
         type: string
 
 concurrency:
-  group: generate-reel
+  group: generate-post
   cancel-in-progress: false
-
-permissions:
-  contents: write
 
 jobs:
   generate:
@@ -31,22 +27,18 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
           cache: 'npm'
-      - name: Install ffmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - run: npm ci
-      - name: Generate reel
+      - name: Generate post
         run: |
           PREVIEW='${{ inputs.preview || '0' }}'
           if [ "$PREVIEW" != "0" ] && [ -n "$PREVIEW" ]; then
-            npm run script:generate-reel -- --preview=$PREVIEW
+            npm run script:generate-post -- --preview=$PREVIEW
           else
-            npm run script:generate-reel -- --schedule-in=900
+            npm run script:generate-post
           fi
         env:
           CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
@@ -58,12 +50,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: 'gemini-2.5-flash-lite'
           STYLE_PRESET: ${{ inputs.style_preset || 'asian-cozy' }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       - name: Collect preview images
         if: ${{ inputs.preview != '' && inputs.preview != '0' }}
         run: |
           mkdir -p preview-out
-          # Find the most recent /tmp/reel-*/ dir created by the script
-          src=$(ls -td /tmp/reel-* 2>/dev/null | head -1)
+          src=$(ls -td /tmp/post-* 2>/dev/null | head -1)
           if [ -n "$src" ]; then
             cp -v "$src"/*.png preview-out/ 2>/dev/null || true
           fi
@@ -72,18 +65,6 @@ jobs:
         if: ${{ inputs.preview != '' && inputs.preview != '0' }}
         uses: actions/upload-artifact@v4
         with:
-          name: reel-preview-${{ inputs.style_preset || 'asian-cozy' }}
+          name: post-preview-${{ inputs.style_preset || 'asian-cozy' }}
           path: preview-out/
           retention-days: 7
-      - name: Commit generated reel
-        if: ${{ inputs.preview == '' || inputs.preview == '0' }}
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add reels-source/auto-*.mp4
-          if git diff --staged --quiet; then
-            echo "No new reel to commit"
-            exit 0
-          fi
-          git commit -m "chore: auto-generated reel $(date -u +%Y-%m-%d)"
-          git push
