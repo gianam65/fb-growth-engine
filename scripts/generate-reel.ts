@@ -30,9 +30,43 @@ const XFADE_DURATION = 0.6;
 const AUDIO_DIR = 'assets/audio';
 const OUTPUT_DIR = 'reels-source';
 
+// Style presets — these get appended to every Gemini-generated scene description
+// before sending to FLUX. Locks aesthetic; only the scene varies day to day.
+const STYLE_PRESETS: Record<string, { suffix: string; vibe_hint: string }> = {
+  'asian-cozy': {
+    suffix:
+      'modern asian apartment cozy aesthetic, xiaohongshu home decor style, douyin cozy room, lots of indoor plants, monstera fiddle leaf snake plant, hanging vines, light oak wood floor, beige neutral walls, white minimalist furniture, rattan chair, rice paper pendant lamp, paper lantern, warm tungsten lighting, golden hour soft natural light from large window, biophilic interior, lush greenery, lived-in cozy vibe, 35mm film, Kodak Portra 400, photorealistic, sharp focus, magazine quality, no people, no text, no logos',
+    vibe_hint:
+      'modern Asian apartment with rice paper lamps, lots of plants (monstera, fiddle leaf), wood floor, beige walls, large window, white desk',
+  },
+  japandi: {
+    suffix:
+      'japandi aesthetic, japanese scandinavian fusion interior, minimalist, light wood, white walls, indoor plants, soft natural light, neutral palette, wabi-sabi, hygge, 35mm film, photorealistic, magazine quality, no people, no text',
+    vibe_hint: 'Japandi: minimal Japanese-Scandinavian, very clean, plants, light wood',
+  },
+  kinfolk: {
+    suffix:
+      'kinfolk magazine aesthetic, slow living interior, beige cream white palette, natural linen, ceramic, soft window light, golden hour, film grain, 35mm Kodak Portra 400, photorealistic, magazine quality, no people, no text',
+    vibe_hint: 'Kinfolk: minimalist Scandinavian, beige/cream, ceramic and linen, no plants',
+  },
+  'rainy-cafe': {
+    suffix:
+      'cozy cafe corner, rain on window, condensation droplets, warm tungsten table lamp, ceramic mug with steam, wooden table, dim warm lighting, moody atmosphere, jazz cafe vibe, 35mm film, photorealistic, no people, no text',
+    vibe_hint: 'Rainy cafe corner: rain on window, warm lamp, ceramic mug, moody dim lighting',
+  },
+  'dark-academia': {
+    suffix:
+      'dark academia aesthetic, antique library, leather-bound books, brass desk lamp, dark wood furniture, persian rug, vintage globe, deep brown burgundy palette, candlelight, moody warm lighting, 35mm film, photorealistic, no people, no text',
+    vibe_hint: 'Dark academia: antique library, dark wood, leather books, brass lamp, moody warm',
+  },
+};
+
+const STYLE_PRESET = process.env.STYLE_PRESET || 'asian-cozy';
+const STYLE = STYLE_PRESETS[STYLE_PRESET] ?? STYLE_PRESETS['asian-cozy']!;
+
 interface GenSpec {
   theme: string;
-  image_prompts: string[];
+  scene_descriptions: string[];
   caption: string;
   hashtags: string;
 }
@@ -41,26 +75,31 @@ const SPEC_SCHEMA = {
   type: 'object',
   properties: {
     theme: { type: 'string' },
-    image_prompts: { type: 'array', items: { type: 'string' }, minItems: NUM_IMAGES, maxItems: NUM_IMAGES },
+    scene_descriptions: { type: 'array', items: { type: 'string' }, minItems: NUM_IMAGES, maxItems: NUM_IMAGES },
     caption: { type: 'string' },
     hashtags: { type: 'string' },
   },
-  required: ['theme', 'image_prompts', 'caption', 'hashtags'],
+  required: ['theme', 'scene_descriptions', 'caption', 'hashtags'],
 };
 
-const SPEC_PROMPT = `You curate cozy/lofi/cinematic interior content for a Vietnamese home decor Facebook page named "Cozy Vibe".
-Generate one daily reel concept. Output JSON.
+const SPEC_PROMPT = `You curate one daily Reel concept for a Vietnamese home decor Facebook page named "Cozy Vibe".
+The aesthetic is FIXED to: ${STYLE.vibe_hint}.
+You do NOT need to mention aesthetic/style/film-stock/lighting words — those are appended automatically. Focus ONLY on what objects appear and where the camera is.
 
-Fields:
-- theme: short English slug describing today's vibe (e.g., "rainy-cafe-corner", "warm-bookshelf-evening", "minimalist-tea-ritual"). Avoid repetition with these recent themes if any: <NONE>.
-- image_prompts: array of EXACTLY ${NUM_IMAGES} distinct image prompts in English for an AI image generator. Each prompt MUST:
-  * describe a cozy/calm interior scene (no people unless silhouette)
-  * specify portrait 9:16 vertical composition explicitly
-  * mention warm lighting, film grain, soft shadows, cinematic shallow depth of field
-  * vary the camera angle (wide, close-up, detail shot, over-the-shoulder POV, top-down)
-  * be concrete: include specific objects (e.g., ceramic mug, linen curtain, brass lamp, knitted blanket, rain on window, indoor plants)
-- caption: 1-2 short sentences in casual Vietnamese (no emojis at start). Soothing, evocative, not salesy.
-- hashtags: single line of 6-10 hashtags, mix Vietnamese + English (e.g., #cozyvibe #nhaxinh #decor #aesthetic #lofi #chillvibes).
+Output JSON with these fields:
+
+- theme: short English slug for today (e.g., "morning-plant-corner", "evening-desk-glow", "rainy-window-monstera"). Be specific.
+
+- scene_descriptions: array of EXACTLY ${NUM_IMAGES} distinct one-line scene descriptions in English. Each line MUST:
+  * be a different camera angle (e.g., wide room shot, close-up of a corner detail, over-the-shoulder, top-down flatlay, low-angle floor view)
+  * name 3-6 specific objects in the frame (e.g., "monstera leaves catching window light, white ceramic mug on side table, linen curtain swaying")
+  * stay coherent with the day's theme — same room/space, different angles
+  * AVOID style words like "cozy", "cinematic", "film grain", "warm" — those auto-append later
+  * AVOID people, faces, hands; silhouettes far away OK only if needed
+
+- caption: 1-2 short sentences in casual Vietnamese, soothing/evocative, not salesy. No emoji at the start.
+
+- hashtags: single line of 8-10 hashtags, mix Vietnamese + English (e.g., #cozyvibe #nhaxinh #decor #aestheticroom #xiaohongshu #lofi #plantparent).
 
 Return ONLY the JSON, no markdown fence.`;
 
@@ -229,17 +268,19 @@ function shellEscape(args: string[]): string {
   return args.map((a) => (/[^A-Za-z0-9_\-./=:,@+]/.test(a) ? `'${a.replace(/'/g, `'\\''`)}'` : a)).join(' ');
 }
 
-function parseArgs(): { scheduleIn: number; skipPublish: boolean } {
+function parseArgs(): { scheduleIn: number; skipPublish: boolean; preview: number } {
   let scheduleIn = 600;
   let skipPublish = false;
+  let preview = 0;
   for (const a of process.argv.slice(2)) {
     const m = a.match(/^--([^=]+)(?:=(.*))?$/);
     if (!m) continue;
     const [, k, v] = m;
     if (k === 'schedule-in' && v) scheduleIn = Number(v);
     else if (k === 'skip-publish') skipPublish = true;
+    else if (k === 'preview') preview = v ? Number(v) : 2;
   }
-  return { scheduleIn, skipPublish };
+  return { scheduleIn, skipPublish, preview };
 }
 
 async function main() {
@@ -247,32 +288,47 @@ async function main() {
   const args = parseArgs();
   const today = new Date().toISOString().slice(0, 10);
 
-  console.log(`[1/5] Gemini text (${TEXT_MODEL}): generating reel spec...`);
+  console.log(`[1/5] Gemini text (${TEXT_MODEL}, style=${STYLE_PRESET}): generating reel spec...`);
   const raw = await geminiText(env, SPEC_PROMPT, SPEC_SCHEMA);
   const spec = JSON.parse(raw) as GenSpec;
-  if (!Array.isArray(spec.image_prompts) || spec.image_prompts.length !== NUM_IMAGES) {
-    throw new Error(`Spec has wrong image_prompts length: ${spec.image_prompts?.length}`);
+  if (!Array.isArray(spec.scene_descriptions) || spec.scene_descriptions.length !== NUM_IMAGES) {
+    throw new Error(`Spec has wrong scene_descriptions length: ${spec.scene_descriptions?.length}`);
   }
   console.log(`  theme: ${spec.theme}`);
   console.log(`  caption: ${spec.caption}`);
+  console.log(`  scenes:`);
+  for (const s of spec.scene_descriptions) console.log(`    - ${s}`);
 
-  console.log(`[2/5] Image gen (${IMAGE_PROVIDER}/${POLLINATIONS_MODEL}): generating ${NUM_IMAGES} images...`);
+  const numToGen = args.preview > 0 ? Math.min(args.preview, NUM_IMAGES) : NUM_IMAGES;
+  console.log(`[2/5] Image gen (${IMAGE_PROVIDER}/${POLLINATIONS_MODEL}): generating ${numToGen} image(s)...`);
   const tmp = await mkdtemp(join(tmpdir(), 'reel-'));
   const imagePaths: string[] = [];
   const interImageSleep = Number(process.env.IMAGE_INTER_SLEEP_SEC || 2);
   const seedBase = Math.floor(Date.now() / 1000) % 1_000_000;
-  for (let i = 0; i < spec.image_prompts.length; i++) {
-    const prompt = spec.image_prompts[i]!;
-    process.stdout.write(`  img ${i + 1}/${NUM_IMAGES}... `);
+  for (let i = 0; i < numToGen; i++) {
+    const scene = spec.scene_descriptions[i]!;
+    const prompt = `${scene}, ${STYLE.suffix}`;
+    process.stdout.write(`  img ${i + 1}/${numToGen}... `);
     const t0 = Date.now();
     const buf = await genImage(env, prompt, seedBase + i);
     const path = join(tmp, `img-${i}.png`);
     await writeFile(path, buf);
     imagePaths.push(path);
     console.log(`${(buf.length / 1024).toFixed(0)}KB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
-    if (i < spec.image_prompts.length - 1 && interImageSleep > 0) {
+    if (i < numToGen - 1 && interImageSleep > 0) {
       await new Promise((r) => setTimeout(r, interImageSleep * 1000));
     }
+  }
+
+  if (args.preview > 0) {
+    console.log(`\nPreview mode — ${numToGen} image(s) saved to:`);
+    for (const p of imagePaths) console.log(`  ${p}`);
+    if (process.platform === 'darwin') {
+      try {
+        execSync(`open ${imagePaths.map((p) => `'${p}'`).join(' ')}`);
+      } catch { /* ignore */ }
+    }
+    return;
   }
 
   console.log(`[3/5] picking ambient audio...`);
