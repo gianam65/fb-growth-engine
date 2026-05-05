@@ -18,19 +18,17 @@
     'div[class*="ItemCard"]',
   ];
 
+  // Multi-word phrases only — single words ("link", "tạo", "copy") match our
+  // own injected button title and cause infinite loop.
   const GET_LINK_KEYWORDS = [
+    'lấy link',
     'tạo link',
     'get link',
-    'lấy link',
+    'lấy đường dẫn',
+    'tạo đường dẫn',
     'sao chép link',
     'copy link',
     'nhận link',
-    'tạo đường dẫn',
-    'sao chép',
-    'copy',
-    'generate',
-    'link',
-    'tạo',
   ];
 
   const SHOPEE_LINK_RE = /https?:\/\/(s\.shopee\.vn|shope\.ee)\/[A-Za-z0-9_-]+/i;
@@ -91,9 +89,10 @@
   }
 
   function findGetLinkButton(card) {
-    // Prefer buttons inside the card; fall back to anything with the right text
     const candidates = card.querySelectorAll('button, a[role="button"], div[role="button"], a, [class*="btn"], [class*="Button"]');
     for (const btn of candidates) {
+      // CRITICAL: skip our own injected button (its title contains "link" which would loop)
+      if (btn.classList.contains('cv-save-btn')) continue;
       const text = visibleText(btn, 50).toLowerCase();
       const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
       const title = (btn.getAttribute('title') || '').toLowerCase();
@@ -170,6 +169,7 @@
     // Find any visible button matching keywords (Copy/Sao chép inside Shopee's modal)
     const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"], [class*="btn"], [class*="Button"]');
     for (const btn of allBtns) {
+      if (btn.classList.contains('cv-save-btn')) continue; // skip our own button
       if (btn.offsetParent === null) continue; // hidden
       const text = visibleText(btn, 30).toLowerCase();
       const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
