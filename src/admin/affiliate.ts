@@ -146,9 +146,15 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
       price?: string;
       image_url?: string;
       source_url?: string;
-      product_url?: string;        // NEW: product detail page on shopee.vn (from card href)
+      product_url?: string;
       source_id?: string;
       category?: string;
+      // From extension's pre-fetch (when it has Shopee session cookies):
+      media_urls?: string[];
+      video_url?: string | null;
+      shopee_shopid?: string;
+      shopee_itemid?: string;
+      media_fetch_error?: string;
     }>();
     const aff = body.affiliate_url?.trim();
     if (!aff || !/^https?:\/\//i.test(aff)) {
@@ -184,12 +190,17 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
     }
     debug.parsed = parsed;
 
-    // Insert immediately so user gets a response; media fetch may follow
+    // Use media from extension (if it pre-fetched with user's Shopee session)
+    const extensionMedia = Array.isArray(body.media_urls) && body.media_urls.length > 0;
+    const mediaUrlsJson = extensionMedia ? JSON.stringify(body.media_urls) : null;
+    const finalShopid = body.shopee_shopid ?? parsed?.shopid ?? null;
+    const finalItemid = body.shopee_itemid ?? parsed?.itemid ?? null;
+
     const result = await env.DB.prepare(
       `INSERT INTO affiliate_products
          (source, source_id, title, price, image_url, affiliate_url, source_url, category, status,
-          product_url, shopee_shopid, shopee_itemid)
-       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?)
+          product_url, shopee_shopid, shopee_itemid, media_urls, video_url, media_fetched_at, media_fetch_error)
+       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?, ?, ?, ?, ?)
        RETURNING id`,
     )
       .bind(
@@ -201,17 +212,24 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
         body.source_url ?? null,
         body.category ?? null,
         productUrl,
-        parsed?.shopid ?? null,
-        parsed?.itemid ?? null,
+        finalShopid,
+        finalItemid,
+        mediaUrlsJson,
+        body.video_url ?? null,
+        extensionMedia ? Math.floor(Date.now() / 1000) : null,
+        body.media_fetch_error ?? null,
       )
       .first<{ id: number }>();
 
-    // If we have shopid+itemid, fetch media synchronously now (fast — Shopee API is ~200-500ms)
-    let mediaResult: { images: number; has_video: boolean } | null = null;
-    if (parsed) {
+    // If extension didn't provide media (or only partial), and we have shopid+itemid,
+    // fall back to server-side fetch (works only if Shopee doesn't gate on cookies).
+    let mediaResult: { images: number; has_video: boolean; source: string } | null = extensionMedia
+      ? { images: body.media_urls!.length, has_video: !!body.video_url, source: 'extension' }
+      : null;
+    if (!mediaResult && parsed) {
       try {
         const media = await fetchShopeeItem(parsed.shopid, parsed.itemid);
-        if (media) {
+        if (media && media.image_urls.length > 0) {
           await env.DB.prepare(
             `UPDATE affiliate_products
                SET title = COALESCE(NULLIF(title, ''), ?),
@@ -221,17 +239,12 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
                    media_fetch_error = NULL
              WHERE id = ?`,
           )
-            .bind(
-              media.title,
-              JSON.stringify(media.image_urls),
-              media.video_url,
-              result?.id,
-            )
+            .bind(media.title, JSON.stringify(media.image_urls), media.video_url, result?.id)
             .run();
-          mediaResult = { images: media.image_urls.length, has_video: !!media.video_url };
+          mediaResult = { images: media.image_urls.length, has_video: !!media.video_url, source: 'worker' };
         } else {
           await env.DB.prepare(
-            `UPDATE affiliate_products SET media_fetch_error = 'item API returned null' WHERE id = ?`,
+            `UPDATE affiliate_products SET media_fetch_error = 'item API returned null/empty' WHERE id = ?`,
           ).bind(result?.id).run();
         }
       } catch (err) {
