@@ -134,26 +134,11 @@ async function fetchShopeeMediaViaTab(productUrl) {
     throw new Error('tabs.create: ' + e.message);
   }
 
-  const waitForComplete = () =>
-    new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => {
-        chrome.tabs.onUpdated.removeListener(listener);
-        reject(new Error('tab load timeout (15s)'));
-      }, 15000);
-      const listener = (id, info) => {
-        if (id === tab.id && info.status === 'complete') {
-          chrome.tabs.onUpdated.removeListener(listener);
-          clearTimeout(timeout);
-          resolve();
-        }
-      };
-      chrome.tabs.onUpdated.addListener(listener);
-    });
-
   try {
-    await waitForComplete();
-    // Wait for SPA to render images + video. Shopee finishes ~5-7s.
-    await new Promise((r) => setTimeout(r, 6000));
+    // Don't wait for 'complete' event — Shopee's SPA never reliably fires
+    // it (long-polling). Fixed 9s wait is enough for product images/video
+    // to render in DOM.
+    await new Promise((r) => setTimeout(r, 9000));
 
     const [exec] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
