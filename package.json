@@ -14,6 +14,7 @@
     "test": "vitest run",
     "script:upload-reel": "tsx scripts/upload-reel.ts",
     "script:enqueue-reel": "tsx scripts/enqueue-reel.ts",
+    "script:generate-reel": "tsx scripts/generate-reel.ts",
     "script:pull-insights": "tsx scripts/pull-insights.ts",
     "script:daily-report": "tsx scripts/daily-report.ts"
   },

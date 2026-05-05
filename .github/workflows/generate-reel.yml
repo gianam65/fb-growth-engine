@@ -1,0 +1,54 @@
+name: Generate reel
+
+on:
+  schedule:
+    # 00:00 UTC = 07:00 Asia/Ho_Chi_Minh — gives ~10 min buffer before publish
+    # cron picks it up.
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: generate-reel
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - run: npm ci
+      - name: Generate reel
+        run: npm run script:generate-reel -- --schedule-in=900
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          FB_GRAPH_VERSION: 'v21.0'
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: 'gemini-2.5-flash-lite'
+          GEMINI_IMAGE_MODEL: 'gemini-2.5-flash-image-preview'
+      - name: Commit generated reel
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add reels-source/auto-*.mp4
+          if git diff --staged --quiet; then
+            echo "No new reel to commit"
+            exit 0
+          fi
+          git commit -m "chore: auto-generated reel $(date -u +%Y-%m-%d)"
+          git push
