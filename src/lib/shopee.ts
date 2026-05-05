@@ -29,7 +29,8 @@ const ITEM_API = 'https://shopee.vn/api/v4/item/get';
 // Examples we accept:
 //   https://shopee.vn/Title-Description-i.123456.987654321
 //   https://shopee.vn/product/123456/987654321
-//   https://shopee.vn/product/123456/987654321?...
+//   https://shopee.vn/opaanlp/123456/987654321  ← affiliate-tracked landing
+//   https://shopee.vn/universal-link/123456/987654321
 export function parseProductUrl(url: string): { shopid: string; itemid: string } | null {
   try {
     const u = new URL(url);
@@ -37,11 +38,12 @@ export function parseProductUrl(url: string): { shopid: string; itemid: string }
 
     // Pattern A: /Title-Description-i.SHOPID.ITEMID
     const a = u.pathname.match(/-i\.(\d+)\.(\d+)/);
-    if (a) return { shopid: a[1]!, itemid: a[2]!! };
+    if (a) return { shopid: a[1]!, itemid: a[2]! };
 
-    // Pattern B: /product/SHOPID/ITEMID
-    const b = u.pathname.match(/^\/product\/(\d+)\/(\d+)/);
-    if (b) return { shopid: b[1]!, itemid: b[2]!! };
+    // Pattern B: /<segment>/SHOPID/ITEMID — covers /product/, /opaanlp/,
+    // /universal-link/, etc. Two numeric path segments after one word segment.
+    const b = u.pathname.match(/^\/[a-z][a-z0-9-]*\/(\d+)\/(\d+)(?:\/|$|\?)/i);
+    if (b) return { shopid: b[1]!, itemid: b[2]! };
 
     return null;
   } catch {
