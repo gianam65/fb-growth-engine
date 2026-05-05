@@ -1,0 +1,55 @@
+name: Curate FB post (Pexels)
+
+on:
+  schedule:
+    # 00:00 UTC = 07:00 Asia/Ho_Chi_Minh
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+    inputs:
+      preview:
+        description: 'Preview mode: pick photos and print URLs only (no download, no caption, no publish)'
+        required: false
+        default: '0'
+        type: string
+      style_preset:
+        description: 'Style preset (asian-cozy / japandi / kinfolk / rainy-cafe)'
+        required: false
+        default: 'asian-cozy'
+        type: string
+
+concurrency:
+  group: curate-post
+  cancel-in-progress: false
+
+jobs:
+  curate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+      - run: npm ci
+      - name: Curate post
+        run: |
+          PREVIEW='${{ inputs.preview || '0' }}'
+          if [ "$PREVIEW" != "0" ] && [ -n "$PREVIEW" ]; then
+            npm run script:curate-post -- --preview=$PREVIEW
+          else
+            npm run script:curate-post
+          fi
+        env:
+          CF_ACCOUNT_ID: ${{ secrets.CF_ACCOUNT_ID }}
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          D1_DATABASE_ID: ${{ secrets.D1_DATABASE_ID }}
+          FB_GRAPH_VERSION: 'v21.0'
+          FB_PAGE_ACCESS_TOKEN: ${{ secrets.FB_PAGE_ACCESS_TOKEN }}
+          FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_MODEL: 'gemini-2.5-flash-lite'
+          STYLE_PRESET: ${{ inputs.style_preset || 'asian-cozy' }}
+          PEXELS_API_KEY: ${{ secrets.PEXELS_API_KEY }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
