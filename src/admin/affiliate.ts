@@ -1,4 +1,5 @@
 import type { Env } from '@/lib/env';
+import { parseProductUrl, fetchShopeeItem, resolveShortLink } from '@/lib/shopee';
 
 // Affiliate product pool — populated by the Chrome extension and consumed by
 // curate-post.ts (one product per FB post, posted as a comment).
@@ -145,6 +146,7 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
       price?: string;
       image_url?: string;
       source_url?: string;
+      product_url?: string;        // NEW: product detail page on shopee.vn (from card href)
       source_id?: string;
       category?: string;
     }>();
@@ -160,10 +162,25 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
     if (existing) {
       return Response.json({ ok: true, duplicate: true, id: existing.id }, { headers: CORS_HEADERS });
     }
+
+    // Resolve product URL: prefer explicit product_url from extension; else
+    // try to derive from source_url; else resolve s.shopee.vn short link.
+    let productUrl: string | null = body.product_url ?? body.source_url ?? null;
+    let parsed = productUrl ? parseProductUrl(productUrl) : null;
+    if (!parsed && /s\.shopee\.vn|shope\.ee/i.test(aff)) {
+      const resolved = await resolveShortLink(aff);
+      if (resolved) {
+        productUrl = resolved;
+        parsed = parseProductUrl(resolved);
+      }
+    }
+
+    // Insert immediately so user gets a response; media fetch may follow
     const result = await env.DB.prepare(
       `INSERT INTO affiliate_products
-         (source, source_id, title, price, image_url, affiliate_url, source_url, category, status)
-       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED')
+         (source, source_id, title, price, image_url, affiliate_url, source_url, category, status,
+          product_url, shopee_shopid, shopee_itemid)
+       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?)
        RETURNING id`,
     )
       .bind(
@@ -174,9 +191,51 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
         aff,
         body.source_url ?? null,
         body.category ?? null,
+        productUrl,
+        parsed?.shopid ?? null,
+        parsed?.itemid ?? null,
       )
       .first<{ id: number }>();
-    return Response.json({ ok: true, id: result?.id }, { headers: CORS_HEADERS });
+
+    // If we have shopid+itemid, fetch media synchronously now (fast — Shopee API is ~200-500ms)
+    let mediaResult: { images: number; has_video: boolean } | null = null;
+    if (parsed) {
+      try {
+        const media = await fetchShopeeItem(parsed.shopid, parsed.itemid);
+        if (media) {
+          await env.DB.prepare(
+            `UPDATE affiliate_products
+               SET title = COALESCE(NULLIF(title, ''), ?),
+                   media_urls = ?,
+                   video_url = ?,
+                   media_fetched_at = unixepoch(),
+                   media_fetch_error = NULL
+             WHERE id = ?`,
+          )
+            .bind(
+              media.title,
+              JSON.stringify(media.image_urls),
+              media.video_url,
+              result?.id,
+            )
+            .run();
+          mediaResult = { images: media.image_urls.length, has_video: !!media.video_url };
+        } else {
+          await env.DB.prepare(
+            `UPDATE affiliate_products SET media_fetch_error = 'item API returned null' WHERE id = ?`,
+          ).bind(result?.id).run();
+        }
+      } catch (err) {
+        await env.DB.prepare(
+          `UPDATE affiliate_products SET media_fetch_error = ? WHERE id = ?`,
+        ).bind(String(err).slice(0, 300), result?.id).run();
+      }
+    }
+
+    return Response.json(
+      { ok: true, id: result?.id, product_url: productUrl, parsed, media: mediaResult },
+      { headers: CORS_HEADERS },
+    );
   }
 
   // DELETE /:id — remove a product (query auth)

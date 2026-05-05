@@ -102,42 +102,6 @@ async function uploadFbPhoto(env: ScriptEnv, image: Buffer, filename: string): P
   return json.id;
 }
 
-interface AffiliateProduct {
-  id: number;
-  title: string | null;
-  price: string | null;
-  affiliate_url: string;
-}
-
-async function pickAffiliateProduct(env: ScriptEnv): Promise<AffiliateProduct | null> {
-  const rows = await d1Query<AffiliateProduct>(
-    env,
-    `SELECT id, title, price, affiliate_url
-       FROM affiliate_products
-      WHERE status = 'APPROVED'
-      ORDER BY COALESCE(last_used_at, 0) ASC, used_count ASC, id ASC
-      LIMIT 1`,
-  );
-  return rows[0] ?? null;
-}
-
-async function postFbComment(env: ScriptEnv, postId: string, message: string): Promise<string> {
-  const url = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}/${postId}/comments`;
-  const params = new URLSearchParams();
-  params.set('message', message);
-  params.set('access_token', env.FB_PAGE_ACCESS_TOKEN);
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: params,
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`FB comment ${res.status}: ${text.slice(0, 400)}`);
-  const json = JSON.parse(text) as { id?: string };
-  if (!json.id) throw new Error(`FB comment no id: ${text}`);
-  return json.id;
-}
-
 async function publishFeedPost(env: ScriptEnv, mediaIds: string[], message: string): Promise<string> {
   const url = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}/${env.FB_PAGE_ID}/feed`;
   const params = new URLSearchParams();
@@ -285,34 +249,11 @@ async function main() {
   }));
   const message = `${captionSpec.caption}\n\n${captionSpec.hashtags}`;
 
-  console.log(`[4/6] Publishing feed post...`);
+  console.log(`[4/5] Publishing feed post...`);
   const fbPostId = await publishFeedPost(env, mediaIds, message);
   console.log(`  fb_post_id: ${fbPostId}`);
 
-  console.log(`[5/6] Picking affiliate product → posting as comment...`);
-  const product = await pickAffiliateProduct(env);
-  let affiliateCommentId: string | null = null;
-  if (product) {
-    const commentMsg = product.title
-      ? `🛍️ shop the vibe — ${product.title}\n${product.affiliate_url}`
-      : `🛍️ shop the vibe\n${product.affiliate_url}`;
-    try {
-      affiliateCommentId = await postFbComment(env, fbPostId, commentMsg);
-      console.log(`  comment_id: ${affiliateCommentId}`);
-      const now2 = Math.floor(Date.now() / 1000);
-      await d1Query(
-        env,
-        `UPDATE affiliate_products SET used_count = used_count + 1, last_used_at = ? WHERE id = ?`,
-        [now2, product.id],
-      );
-    } catch (err) {
-      console.error(`  affiliate comment failed: ${String(err).slice(0, 200)}`);
-    }
-  } else {
-    console.log(`  (no APPROVED affiliate products in pool — skipping comment)`);
-  }
-
-  console.log(`[6/6] Marking pool photos as used + logging fb_posts...`);
+  console.log(`[5/5] Marking pool photos as used + logging fb_posts...`);
   const now = Math.floor(Date.now() / 1000);
   for (const r of rows) {
     await d1Query(

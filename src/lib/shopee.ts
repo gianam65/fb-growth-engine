@@ -1,0 +1,129 @@
+// Shopee Vietnam item API fetcher.
+// Given a product URL, extracts shopid + itemid and fetches the public
+// item endpoint to get image URLs + video URL.
+//
+// Endpoint: https://shopee.vn/api/v4/item/get?itemid=X&shopid=Y
+// Response shape (relevant fields):
+//   { data: {
+//       name, description,
+//       images: [hash, hash, ...],
+//       video_info_list: [{ default_format: { url, ... }, video_url_list, ... }],
+//       price: int (cents-ish), price_max, ...
+//     }
+//   }
+
+export interface ShopeeMedia {
+  product_url: string;
+  shopid: string;
+  itemid: string;
+  title: string;
+  description: string;
+  image_urls: string[];
+  video_url: string | null;
+  price: string | null;
+}
+
+const IMG_BASE = 'https://down-vn.img.susercontent.com/file/';
+const ITEM_API = 'https://shopee.vn/api/v4/item/get';
+
+// Examples we accept:
+//   https://shopee.vn/Title-Description-i.123456.987654321
+//   https://shopee.vn/product/123456/987654321
+//   https://shopee.vn/product/123456/987654321?...
+export function parseProductUrl(url: string): { shopid: string; itemid: string } | null {
+  try {
+    const u = new URL(url);
+    if (!u.hostname.endsWith('shopee.vn')) return null;
+
+    // Pattern A: /Title-Description-i.SHOPID.ITEMID
+    const a = u.pathname.match(/-i\.(\d+)\.(\d+)/);
+    if (a) return { shopid: a[1]!, itemid: a[2]!! };
+
+    // Pattern B: /product/SHOPID/ITEMID
+    const b = u.pathname.match(/^\/product\/(\d+)\/(\d+)/);
+    if (b) return { shopid: b[1]!, itemid: b[2]!! };
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// Resolve s.shopee.vn short link to the underlying product URL.
+// FB doesn't follow redirects — we do a HEAD to get the Location header.
+export async function resolveShortLink(shortUrl: string): Promise<string | null> {
+  try {
+    const res = await fetch(shortUrl, {
+      method: 'GET',
+      redirect: 'manual',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      },
+    });
+    const loc = res.headers.get('Location');
+    if (loc) return loc;
+    // Some shorteners use HTML meta refresh — read body
+    if (res.status === 200) {
+      const text = await res.text();
+      const m = text.match(/(?:url=|window\.location\s*=\s*['"])(https?:\/\/shopee\.vn\/[^'"\s]+)/i);
+      if (m) return m[1]!;
+    }
+  } catch {}
+  return null;
+}
+
+export async function fetchShopeeItem(shopid: string, itemid: string): Promise<ShopeeMedia | null> {
+  const url = `${ITEM_API}?itemid=${itemid}&shopid=${shopid}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+      Referer: `https://shopee.vn/product/${shopid}/${itemid}`,
+      Accept: 'application/json',
+      'X-API-SOURCE': 'pc',
+    },
+  });
+  if (!res.ok) return null;
+  const json = (await res.json()) as { data?: ShopeeItemRaw } | null;
+  const data = json?.data;
+  if (!data) return null;
+
+  const image_urls: string[] = (data.images ?? []).map((hash) => `${IMG_BASE}${hash}`);
+
+  let video_url: string | null = null;
+  const videoInfo = data.video_info_list?.[0];
+  if (videoInfo) {
+    // Prefer 720p+ if multiple formats; else use default_format
+    const list = videoInfo.video_url_list ?? [];
+    const sorted = [...list].sort((a, b) => (b.default_format?.height ?? 0) - (a.default_format?.height ?? 0));
+    video_url = sorted[0]?.url || videoInfo.default_format?.url || null;
+  }
+
+  // Price normalization (Shopee uses int with ×100000 scaling)
+  const price_raw = data.price ?? data.price_min ?? null;
+  const price = price_raw ? `₫${(price_raw / 100000).toLocaleString('vi-VN')}` : null;
+
+  return {
+    product_url: `https://shopee.vn/product/${shopid}/${itemid}`,
+    shopid,
+    itemid,
+    title: data.name ?? '',
+    description: data.description ?? '',
+    image_urls,
+    video_url,
+    price,
+  };
+}
+
+// Internal Shopee response shape (best-effort typings)
+interface ShopeeItemRaw {
+  name?: string;
+  description?: string;
+  images?: string[];
+  price?: number;
+  price_min?: number;
+  price_max?: number;
+  video_info_list?: Array<{
+    default_format?: { url?: string; height?: number; width?: number };
+    video_url_list?: Array<{ url?: string; default_format?: { height?: number; width?: number } }>;
+  }>;
+}

@@ -4,7 +4,7 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
-const CV_VERSION = '1.4.3';
+const CV_VERSION = '1.5.0';
 
 (() => {
   if (window.__cvInjected) return;
@@ -80,6 +80,19 @@ const CV_VERSION = '1.4.3';
   function findPrice(card) {
     const el = card.querySelector('[class*="price" i], [class*="Price" i]');
     return visibleText(el, 40);
+  }
+
+  // Find the product detail URL from anchors on the card. We accept:
+  //   shopee.vn/<slug>-i.SHOPID.ITEMID
+  //   shopee.vn/product/SHOPID/ITEMID
+  function findProductUrl(card) {
+    const anchors = card.querySelectorAll('a[href]');
+    for (const a of anchors) {
+      const href = a.href || '';
+      if (!/shopee\.vn/i.test(href)) continue;
+      if (/-i\.\d+\.\d+/.test(href) || /\/product\/\d+\/\d+/.test(href)) return href;
+    }
+    return '';
   }
 
   function isLikelyCard(el) {
@@ -237,10 +250,15 @@ const CV_VERSION = '1.4.3';
         title: findTitle(card),
         image_url: findImage(card),
         price: findPrice(card),
+        product_url: findProductUrl(card),
         source_url: window.location.href,
       };
       savedTitle = data.title;
-      console.log('[CV] autoSaveCard start →', { title: data.title?.slice(0, 60), image: data.image_url?.slice(0, 80) });
+      console.log('[CV] autoSaveCard start →', {
+        title: data.title?.slice(0, 60),
+        image: data.image_url?.slice(0, 80),
+        product_url: data.product_url,
+      });
 
       // Step 1: clipboard (user may have already copied link manually)
       affUrl = await readClipboardShopeeUrl();
