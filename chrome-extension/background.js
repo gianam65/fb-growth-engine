@@ -152,27 +152,64 @@ async function fetchShopeeMediaViaTab(productUrl) {
 
   try {
     await waitForComplete();
-    // Wait for SPA to render images + video. Shopee usually finishes ~3s.
-    await new Promise((r) => setTimeout(r, 4000));
+    // Wait for SPA to render images + video. Shopee finishes ~5-7s.
+    await new Promise((r) => setTimeout(r, 6000));
 
     const [exec] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
+        // ----- images -----
         const imgs = new Set();
         for (const img of document.images) {
-          const src = img.src || '';
+          const src = img.src || img.getAttribute('data-src') || '';
           if (!/susercontent\.com|shopee\.vn/i.test(src)) continue;
           if ((img.naturalWidth || 0) < 200) continue;
           imgs.add(src);
         }
+
+        // ----- videos: try multiple sources -----
         const videos = new Set();
-        for (const v of document.querySelectorAll('video[src], video source[src]')) {
-          const src = v.src || v.getAttribute('src') || '';
-          if (src && !src.startsWith('blob:')) videos.add(src);
+        // 1) <video src> + <source src>
+        for (const v of document.querySelectorAll('video, video source')) {
+          const src = v.src || v.getAttribute('src') || v.currentSrc || '';
+          if (src && /^https?:/i.test(src) && !src.startsWith('blob:')) videos.add(src);
         }
+        // 2) Search HTML source for known Shopee video CDN patterns (mp4, m3u8)
+        const html = document.documentElement.innerHTML;
+        const cdnPatterns = [
+          /https?:\/\/[a-z0-9\-.]*(?:susercontent|shopeevn|shopee\.cf|cvf\.shopee)\.(?:com|vn|cf)\/file\/[a-zA-Z0-9_-]+\.mp4(?:\?[^"'\s)]*)?/gi,
+          /https?:\/\/[^"'\s)<>]+\.(?:mp4|m3u8)(?:\?[^"'\s)]*)?/gi,
+        ];
+        for (const re of cdnPatterns) {
+          const matches = html.match(re) || [];
+          for (const m of matches) {
+            // Filter blob/data
+            if (m.startsWith('blob:') || m.startsWith('data:')) continue;
+            videos.add(m);
+          }
+        }
+        // 3) Search data attributes (some video components store URL in data-*)
+        for (const el of document.querySelectorAll('[data-video-url], [data-src*=".mp4"], [data-href*=".mp4"]')) {
+          const src = el.getAttribute('data-video-url') || el.getAttribute('data-src') || el.getAttribute('data-href') || '';
+          if (src && /^https?:/i.test(src)) videos.add(src);
+        }
+
         const titleEl = document.querySelector('h1, [class*="product-title" i]');
         const title = (titleEl?.innerText || document.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-        return { images: [...imgs], videos: [...videos], title };
+
+        // Prefer .mp4 over .m3u8 (FB Reels needs mp4)
+        const sortedVideos = [...videos].sort((a, b) => {
+          const ax = /\.mp4/i.test(a) ? 0 : 1;
+          const bx = /\.mp4/i.test(b) ? 0 : 1;
+          return ax - bx;
+        });
+
+        return {
+          images: [...imgs],
+          videos: sortedVideos,
+          title,
+          html_size: html.length,
+        };
       },
     });
 

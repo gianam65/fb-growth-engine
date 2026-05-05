@@ -35,19 +35,27 @@ const CAPTION_SCHEMA = {
 };
 
 function captionPrompt(title: string | null, kind: 'reels' | 'photo'): string {
-  return `Write a SHORT casual Vietnamese hook for this Shopee product on a cozy decor Facebook page "Cozy Vibe":
-${title ? `"${title}"` : '(no title — guess from context: cozy home decor)'}
+  return `You write a SHORT Vietnamese caption for a Shopee product post on the "Cozy Vibe" page.
+
+Original product title (long, messy):
+"${title ?? '(no title — describe as: cozy home decor)'}"
 
 Output kind: ${kind === 'reels' ? 'Reels' : 'photo post'}.
 
 Output JSON:
-- caption: a SHORT Vietnamese hook, 4-8 words, casual/playful, references the product type briefly. NOT salesy, NOT clichéd. Examples:
-    "Bàn đẹp ở đây nhé ạ"
-    "Đèn này cute thật sự"
-    "Cái này đáng để rinh"
-    "Góc decor xinh quá đi"
-    "Decor cho phòng nhỏ nè"
-    "Có cái này phòng auto chill"
+- caption: extract the actual product NAME from the title (the main noun, e.g. "Giá để tài liệu 4 ngăn", "Bàn làm việc gaming", "Đèn LED cắm hoa", "Pegboard kẹp bàn"), then add a SHORT Vietnamese tail (2-4 words) that's casual + cozy.
+  Format: "<product name> <short cozy tail>"
+  Examples:
+    title "Giá Để Tài Liệu 4 Ngăn M.Y – Kệ Nhựa Đựng Sách Decor"
+      → "Giá để tài liệu 4 ngăn xinh quá ạ"
+    title "Bàn làm việc bàn gaming thiết kế hiện đại"
+      → "Bàn làm việc gaming chill phết"
+    title "Tranh Đèn Led Cắm Hoa Theo Ý Treo Phòng Khách"
+      → "Tranh đèn LED cắm hoa siêu cute"
+    title "Pegboard Kẹp Bàn Decor Để Đồ Bàn Học"
+      → "Pegboard kẹp bàn decor mê liền"
+  Keep it natural — don't be salesy. Lowercase product description part is fine.
+  Total length: 6-10 words.
 - hashtags: 5-8 short Vietnamese hashtags single line, including #cozyvibe #nhaxinh.
 
 Return JSON only.`;
