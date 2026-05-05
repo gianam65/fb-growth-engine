@@ -165,15 +165,24 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
 
     // Resolve product URL: prefer explicit product_url from extension; else
     // try to derive from source_url; else resolve s.shopee.vn short link.
-    let productUrl: string | null = body.product_url ?? body.source_url ?? null;
+    const debug: Record<string, unknown> = {};
+    let productUrl: string | null = body.product_url ?? null;
     let parsed = productUrl ? parseProductUrl(productUrl) : null;
+    if (!parsed && body.source_url) {
+      // Don't use listing-page source_url as product URL — only if it has shop/item ids.
+      const sourceParsed = parseProductUrl(body.source_url);
+      if (sourceParsed) { productUrl = body.source_url; parsed = sourceParsed; }
+    }
     if (!parsed && /s\.shopee\.vn|shope\.ee/i.test(aff)) {
+      debug.attempted_resolve = aff;
       const resolved = await resolveShortLink(aff);
+      debug.resolved = resolved;
       if (resolved) {
         productUrl = resolved;
         parsed = parseProductUrl(resolved);
       }
     }
+    debug.parsed = parsed;
 
     // Insert immediately so user gets a response; media fetch may follow
     const result = await env.DB.prepare(
@@ -233,7 +242,7 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
     }
 
     return Response.json(
-      { ok: true, id: result?.id, product_url: productUrl, parsed, media: mediaResult },
+      { ok: true, id: result?.id, product_url: productUrl, parsed, media: mediaResult, debug },
       { headers: CORS_HEADERS },
     );
   }

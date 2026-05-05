@@ -4,7 +4,7 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
-const CV_VERSION = '1.5.0';
+const CV_VERSION = '1.5.1';
 
 (() => {
   if (window.__cvInjected) return;
@@ -336,6 +336,7 @@ const CV_VERSION = '1.5.0';
 
       // Step 4: send to background → Worker
       const res = await chrome.runtime.sendMessage({ type: 'save_affiliate', data });
+      console.log('[CV] background response:', res);
       if (res?.ok) {
         if (btn) {
           btn.textContent = res.duplicate ? '✓ dup' : '✓ saved';

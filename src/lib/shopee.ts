@@ -50,25 +50,46 @@ export function parseProductUrl(url: string): { shopid: string; itemid: string }
 }
 
 // Resolve s.shopee.vn short link to the underlying product URL.
-// FB doesn't follow redirects — we do a HEAD to get the Location header.
+// Tries multiple strategies:
+//   1) follow redirects automatically and read final URL
+//   2) manual redirect to read Location header
+//   3) scan HTML body for meta-refresh / JS redirect URL
 export async function resolveShortLink(shortUrl: string): Promise<string | null> {
+  const headers = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+    Accept: 'text/html,*/*',
+  };
+
+  // Strategy 1: follow redirects, look at final URL
   try {
-    const res = await fetch(shortUrl, {
-      method: 'GET',
-      redirect: 'manual',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-      },
-    });
-    const loc = res.headers.get('Location');
-    if (loc) return loc;
-    // Some shorteners use HTML meta refresh — read body
-    if (res.status === 200) {
-      const text = await res.text();
-      const m = text.match(/(?:url=|window\.location\s*=\s*['"])(https?:\/\/shopee\.vn\/[^'"\s]+)/i);
-      if (m) return m[1]!;
+    const res = await fetch(shortUrl, { method: 'GET', redirect: 'follow', headers });
+    if (res.url && res.url !== shortUrl && /shopee\.vn/i.test(res.url) && parseProductUrl(res.url)) {
+      return res.url;
+    }
+    // Strategy 3 (fallback): scan body for product URL or redirect target
+    const text = await res.text();
+    // Match common redirect patterns in HTML/JS
+    const patterns = [
+      /<meta\s+http-equiv=["']refresh["']\s+content=["'][^"']*url=([^"'\s]+)/i,
+      /window\.location(?:\.href)?\s*=\s*["']([^"']+)["']/i,
+      /location\.replace\(\s*["']([^"']+)["']\s*\)/i,
+      /(https?:\/\/shopee\.vn\/[^\s"'<>)]+)/i,
+    ];
+    for (const re of patterns) {
+      const m = text.match(re);
+      if (m && m[1] && /shopee\.vn/i.test(m[1]) && parseProductUrl(m[1])) {
+        return m[1];
+      }
     }
   } catch {}
+
+  // Strategy 2: manual redirect → Location header
+  try {
+    const res = await fetch(shortUrl, { method: 'GET', redirect: 'manual', headers });
+    const loc = res.headers.get('Location');
+    if (loc && /shopee\.vn/i.test(loc) && parseProductUrl(loc)) return loc;
+  } catch {}
+
   return null;
 }
 
