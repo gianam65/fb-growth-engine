@@ -98,26 +98,48 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
 
 let RESOLVED_IMAGE_MODEL: string | null = null;
 
-async function tryGeminiImage(env: ScriptEnv, model: string, prompt: string): Promise<Buffer | null> {
+function parseRetryDelaySec(text: string): number {
+  // Gemini error body has: { error: { details: [{ "@type": ".../RetryInfo", retryDelay: "32s" }] } }
+  const m = text.match(/"retryDelay":\s*"(\d+)s"/);
+  if (m && m[1]) return Number(m[1]);
+  return 30; // default
+}
+
+async function tryGeminiImage(
+  env: ScriptEnv,
+  model: string,
+  prompt: string,
+  maxRetries = 4,
+): Promise<Buffer | null> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: { responseModalities: ['IMAGE'] },
   };
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (res.status === 404 || res.status === 400) return null; // try next candidate
-  if (!res.ok) throw new Error(`Gemini image ${res.status} (${model}): ${text}`);
-  const json = JSON.parse(text) as {
-    candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
-  };
-  const parts = json.candidates?.[0]?.content?.parts ?? [];
-  for (const p of parts) {
-    if (p.inlineData?.data) return Buffer.from(p.inlineData.data, 'base64');
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+    if (res.status === 404 || res.status === 400) return null; // try next candidate (model not found)
+    if (res.status === 429) {
+      if (attempt === maxRetries) throw new Error(`Gemini image rate-limited after ${maxRetries} retries (${model}): ${text.slice(0, 400)}`);
+      const wait = parseRetryDelaySec(text) + 2;
+      console.log(`    [429 rate-limited, sleeping ${wait}s, attempt ${attempt + 1}/${maxRetries}]`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
+      continue;
+    }
+    if (!res.ok) throw new Error(`Gemini image ${res.status} (${model}): ${text}`);
+    const json = JSON.parse(text) as {
+      candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
+    };
+    const parts = json.candidates?.[0]?.content?.parts ?? [];
+    for (const p of parts) {
+      if (p.inlineData?.data) return Buffer.from(p.inlineData.data, 'base64');
+    }
+    return null;
   }
   return null;
 }
@@ -284,6 +306,8 @@ async function main() {
   console.log(`[2/5] Gemini image (candidates: ${IMAGE_MODEL_CANDIDATES.join(', ')}): generating ${NUM_IMAGES} images...`);
   const tmp = await mkdtemp(join(tmpdir(), 'reel-'));
   const imagePaths: string[] = [];
+  // Free-tier image gen has tight RPM. Sleep between calls to spread load.
+  const interImageSleep = Number(process.env.IMAGE_INTER_SLEEP_SEC || 8);
   for (let i = 0; i < spec.image_prompts.length; i++) {
     const prompt = spec.image_prompts[i]!;
     process.stdout.write(`  img ${i + 1}/${NUM_IMAGES}... `);
@@ -292,6 +316,9 @@ async function main() {
     await writeFile(path, buf);
     imagePaths.push(path);
     console.log(`${(buf.length / 1024).toFixed(0)}KB`);
+    if (i < spec.image_prompts.length - 1 && interImageSleep > 0) {
+      await new Promise((r) => setTimeout(r, interImageSleep * 1000));
+    }
   }
 
   console.log(`[3/5] picking ambient audio...`);
