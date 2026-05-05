@@ -17,6 +17,8 @@ export interface Env {
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
   ADMIN_TOKEN: string;
+  PINTEREST_APP_ID?: string;
+  PINTEREST_APP_SECRET?: string;
 }
 
 export type FbEvent =

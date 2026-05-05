@@ -3,6 +3,7 @@ import { handleWebhook } from '@/fb/webhook';
 import { handleEvent } from '@/consumer';
 import { makeLogger } from '@/lib/logger';
 import { handleAdminCurate } from '@/admin/curate';
+import { handleAdminPinterest } from '@/admin/pinterest';
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -10,6 +11,7 @@ export default {
     if (url.pathname === '/webhook') return handleWebhook(req, env);
     if (url.pathname === '/health') return new Response('ok');
     if (url.pathname.startsWith('/admin/curate')) return handleAdminCurate(req, env);
+    if (url.pathname.startsWith('/admin/pinterest')) return handleAdminPinterest(req, env);
     return new Response('not found', { status: 404 });
   },
 
