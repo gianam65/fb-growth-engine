@@ -42,35 +42,50 @@ function checkAdminBearer(req: Request, env: Env): boolean {
 
 const STATUS_HTML = (key: string, products: ProductRow[], counts: Record<string, number>) => {
   const rows = products
-    .map(
-      (p) => `
-      <tr>
+    .map((p) => {
+      const usedBadge = p.used_count > 0
+        ? `<span class="badge ok" title="${p.last_used_at ? new Date(p.last_used_at * 1000).toLocaleString() : ''}">✅ Posted ${p.used_count}×</span>`
+        : `<span class="badge gray">○ Unused</span>`;
+      const statusBadge = p.status !== 'APPROVED' ? `<span class="badge red">${p.status}</span>` : '';
+      return `
+      <tr data-id="${p.id}">
         <td><img src="${p.image_url ?? ''}" alt=""></td>
         <td>
           <div class="title">${escapeHtml(p.title ?? '(no title)')}</div>
-          <div class="meta">${escapeHtml(p.price ?? '')} ${p.status !== 'APPROVED' ? '· ' + p.status : ''} · used: ${p.used_count}${p.last_used_at ? ' · last: ' + new Date(p.last_used_at * 1000).toLocaleDateString() : ''}</div>
+          <div class="meta">${usedBadge} ${statusBadge} ${escapeHtml(p.price ?? '')}</div>
           <div class="link"><a href="${p.affiliate_url}" target="_blank" rel="noopener">${p.affiliate_url}</a></div>
         </td>
-      </tr>`,
-    )
+        <td class="actions">
+          <button class="del" data-id="${p.id}" title="Delete">🗑</button>
+        </td>
+      </tr>`;
+    })
     .join('');
   return `<!doctype html>
 <html lang="vi"><head>
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Affiliate pool</title>
 <style>
-  body { font-family: system-ui,-apple-system,sans-serif; max-width:780px; margin:30px auto; padding:0 16px; color:#222; }
+  body { font-family: system-ui,-apple-system,sans-serif; max-width:820px; margin:30px auto; padding:0 16px; color:#222; }
   h1 { font-size:22px; margin:0 0 8px; }
   .stats { display:flex; gap:10px; margin:14px 0; flex-wrap:wrap; }
   .stats span { padding:5px 10px; border-radius:6px; background:#eee; font-size:13px; }
   table { width:100%; border-collapse:collapse; }
   td { vertical-align:top; padding:10px 6px; border-bottom:1px solid #eee; font-size:13px; }
   td:first-child { width:80px; }
+  td.actions { width:48px; text-align:right; }
   img { width:72px; height:72px; object-fit:cover; border-radius:6px; background:#f0f0f0; }
   .title { font-weight:600; font-size:14px; margin-bottom:4px; }
-  .meta { color:#888; font-size:12px; margin-bottom:4px; }
+  .meta { color:#888; font-size:12px; margin-bottom:4px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
   .link a { color:#79b8ff; word-break:break-all; }
   .nav a { color:#79b8ff; margin-right:14px; font-size:13px; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
+  .badge.ok { background:#d4f5dd; color:#1a7f3a; }
+  .badge.gray { background:#eee; color:#666; }
+  .badge.red { background:#fdeaea; color:#b32d2d; }
+  button.del { background:transparent; border:0; cursor:pointer; font-size:16px; padding:6px 8px; border-radius:6px; }
+  button.del:hover { background:#fdeaea; }
+  tr.deleting { opacity:0.4; }
 </style></head><body>
 <h1>Affiliate pool</h1>
 <div class="nav">
@@ -80,10 +95,29 @@ const STATUS_HTML = (key: string, products: ProductRow[], counts: Record<string,
 <div class="stats">
   <span>APPROVED unused: <b>${counts.unused}</b></span>
   <span>APPROVED total: <b>${counts.approved}</b></span>
-  <span>USED: <b>${counts.used}</b></span>
+  <span>USED (posted): <b>${counts.used}</b></span>
   <span>OTHER: <b>${counts.other}</b></span>
 </div>
 ${products.length === 0 ? '<p>No products yet. Use the Chrome extension to save products from affiliate.shopee.vn.</p>' : '<table>' + rows + '</table>'}
+<script>
+const KEY = ${JSON.stringify(key)};
+document.querySelectorAll('button.del').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    const id = btn.dataset.id;
+    if (!confirm('Delete product id=' + id + '?')) return;
+    const tr = btn.closest('tr');
+    tr.classList.add('deleting');
+    try {
+      const res = await fetch('/admin/affiliate/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
+      if (!res.ok) throw new Error(await res.text());
+      tr.remove();
+    } catch (err) {
+      tr.classList.remove('deleting');
+      alert('Delete failed: ' + err.message);
+    }
+  });
+});
+</script>
 </body></html>`;
 };
 
@@ -143,6 +177,15 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
       )
       .first<{ id: number }>();
     return Response.json({ ok: true, id: result?.id }, { headers: CORS_HEADERS });
+  }
+
+  // DELETE /:id — remove a product (query auth)
+  const deleteMatch = sub.match(/^\/(\d+)$/);
+  if (req.method === 'DELETE' && deleteMatch) {
+    if (!checkAdminQuery(url, env)) return new Response('Unauthorized', { status: 401 });
+    const id = Number(deleteMatch[1]);
+    const r = await env.DB.prepare(`DELETE FROM affiliate_products WHERE id = ?`).bind(id).run();
+    return Response.json({ ok: true, changes: r.meta.changes ?? 0 });
   }
 
   // GET / — status page (query auth)
