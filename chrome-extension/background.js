@@ -49,41 +49,115 @@ async function resolveShortLink(shortUrl) {
   return null;
 }
 
+async function fetchShopeeMediaViaApi(parsed) {
+  const apiUrl = `https://shopee.vn/api/v4/item/get?itemid=${parsed.itemid}&shopid=${parsed.shopid}`;
+  const res = await fetch(apiUrl, {
+    credentials: 'include',
+    headers: {
+      Accept: 'application/json',
+      Referer: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
+      'X-API-SOURCE': 'pc',
+    },
+  });
+  if (!res.ok) throw new Error('api ' + res.status);
+  const json = await res.json();
+  if (json.error || !json.data) throw new Error('shopee error ' + (json.error_msg || json.error || 'no data'));
+  const data = json.data;
+  const image_urls = (data.images || []).map((hash) => IMG_BASE + hash);
+  let video_url = null;
+  const v = data.video_info_list && data.video_info_list[0];
+  if (v) {
+    const list = v.video_url_list || [];
+    const sorted = [...list].sort((a, b) => (b.default_format?.height || 0) - (a.default_format?.height || 0));
+    video_url = (sorted[0] && sorted[0].url) || (v.default_format && v.default_format.url) || null;
+  }
+  return { title: data.name || '', image_urls, video_url };
+}
+
+async function fetchShopeeMediaViaHtml(productUrl) {
+  // Fallback: scrape product page HTML for og:image + og:video + JSON-LD images.
+  const res = await fetch(productUrl, { credentials: 'include', redirect: 'follow' });
+  if (!res.ok) throw new Error('html ' + res.status);
+  const html = await res.text();
+
+  const images = new Set();
+  const ogImg = (html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) || [])[1];
+  if (ogImg) images.add(ogImg);
+
+  const ogVid = (html.match(/<meta\s+property=["']og:video(?::secure_url)?["']\s+content=["']([^"']+)["']/i) || [])[1];
+  let video_url = ogVid || null;
+
+  // Try JSON-LD structured data
+  const ldRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
+  let ldMatch;
+  let title = '';
+  while ((ldMatch = ldRe.exec(html))) {
+    try {
+      const ld = JSON.parse(ldMatch[1]);
+      if (Array.isArray(ld.image)) ld.image.forEach((u) => images.add(u));
+      else if (typeof ld.image === 'string') images.add(ld.image);
+      if (ld.video?.contentUrl) video_url = video_url || ld.video.contentUrl;
+      if (ld.name && !title) title = ld.name;
+    } catch {}
+  }
+
+  // Try Shopee's window.__INITIAL_STATE__ if present
+  const stateMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?})\s*<\/script>/);
+  if (stateMatch) {
+    try {
+      const state = JSON.parse(stateMatch[1]);
+      const candidates = [state?.product?.data, state?.item?.data, state?.item, state?.product];
+      for (const d of candidates) {
+        if (!d) continue;
+        if (Array.isArray(d.images)) d.images.forEach((h) => images.add(IMG_BASE + h));
+        if (d.video_info_list?.[0]) {
+          const v = d.video_info_list[0];
+          video_url = video_url || v.default_format?.url || v.video_url_list?.[0]?.url || null;
+        }
+        if (d.name && !title) title = d.name;
+        break;
+      }
+    } catch {}
+  }
+
+  return { title, image_urls: [...images], video_url };
+}
+
 async function fetchShopeeMedia(productUrl) {
   const parsed = parseProductUrl(productUrl);
   if (!parsed) return { error: 'cannot parse productUrl' };
-  const apiUrl = `https://shopee.vn/api/v4/item/get?itemid=${parsed.itemid}&shopid=${parsed.shopid}`;
+
+  // Try API first (richest data)
+  let apiErr = '';
   try {
-    const res = await fetch(apiUrl, {
-      credentials: 'include', // include user's Shopee session cookies
-      headers: {
-        Accept: 'application/json',
-        Referer: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
-        'X-API-SOURCE': 'pc',
-      },
-    });
-    if (!res.ok) return { error: 'item api ' + res.status, parsed };
-    const json = await res.json();
-    if (json.error || !json.data) return { error: 'shopee error ' + (json.error_msg || json.error || 'no data'), parsed };
-    const data = json.data;
-    const image_urls = (data.images || []).map((hash) => IMG_BASE + hash);
-    let video_url = null;
-    const v = data.video_info_list && data.video_info_list[0];
-    if (v) {
-      const list = v.video_url_list || [];
-      const sorted = [...list].sort((a, b) => (b.default_format?.height || 0) - (a.default_format?.height || 0));
-      video_url = (sorted[0] && sorted[0].url) || (v.default_format && v.default_format.url) || null;
+    const m = await fetchShopeeMediaViaApi(parsed);
+    if (m.image_urls.length > 0) {
+      return {
+        product_url: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
+        shopid: parsed.shopid,
+        itemid: parsed.itemid,
+        ...m,
+      };
     }
-    return {
-      product_url: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
-      shopid: parsed.shopid,
-      itemid: parsed.itemid,
-      title: data.name || '',
-      image_urls,
-      video_url,
-    };
-  } catch (err) {
-    return { error: String(err).slice(0, 200), parsed };
+  } catch (e) {
+    apiErr = String(e).slice(0, 100);
+  }
+
+  // Fallback: scrape HTML
+  try {
+    const m = await fetchShopeeMediaViaHtml(productUrl);
+    if (m.image_urls.length > 0) {
+      return {
+        product_url: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
+        shopid: parsed.shopid,
+        itemid: parsed.itemid,
+        ...m,
+        source: 'html-fallback',
+      };
+    }
+    return { error: `api: ${apiErr || 'no data'} | html: 0 images`, parsed };
+  } catch (e) {
+    return { error: `api: ${apiErr || 'failed'} | html: ${String(e).slice(0, 100)}`, parsed };
   }
 }
 
