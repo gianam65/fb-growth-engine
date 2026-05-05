@@ -40,7 +40,7 @@ jobs:
           FB_PAGE_ID: ${{ secrets.FB_PAGE_ID }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: 'gemini-2.5-flash-lite'
-          GEMINI_IMAGE_MODEL: 'gemini-2.5-flash-image-preview'
+          # GEMINI_IMAGE_MODEL: leave unset → script tries candidates and resolves dynamically
       - name: Commit generated reel
         run: |
           git config user.name "github-actions[bot]"

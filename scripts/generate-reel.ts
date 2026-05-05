@@ -20,7 +20,16 @@ import { join, resolve } from 'node:path';
 import { d1Query, loadEnv, type ScriptEnv } from './lib';
 
 const TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-const IMAGE_MODEL = process.env.GEMINI_IMAGE_MODEL || 'gemini-2.5-flash-image-preview';
+// Image-capable model candidates, tried in order until one succeeds.
+// Override entirely with GEMINI_IMAGE_MODEL env (single name, no fallback).
+const IMAGE_MODEL_CANDIDATES = process.env.GEMINI_IMAGE_MODEL
+  ? [process.env.GEMINI_IMAGE_MODEL]
+  : [
+      'gemini-2.5-flash-image',
+      'gemini-2.5-flash-image-preview',
+      'gemini-2.0-flash-preview-image-generation',
+      'gemini-2.0-flash-exp',
+    ];
 const NUM_IMAGES = 5;
 const SECONDS_PER_IMAGE = 3;
 const XFADE_DURATION = 0.6;
@@ -87,13 +96,13 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
   return out;
 }
 
-async function geminiImage(env: ScriptEnv, prompt: string): Promise<Buffer> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${IMAGE_MODEL}:generateContent?key=${env.GEMINI_API_KEY}`;
+let RESOLVED_IMAGE_MODEL: string | null = null;
+
+async function tryGeminiImage(env: ScriptEnv, model: string, prompt: string): Promise<Buffer | null> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: {
-      responseModalities: ['IMAGE'],
-    },
+    generationConfig: { responseModalities: ['IMAGE'] },
   };
   const res = await fetch(url, {
     method: 'POST',
@@ -101,7 +110,8 @@ async function geminiImage(env: ScriptEnv, prompt: string): Promise<Buffer> {
     body: JSON.stringify(body),
   });
   const text = await res.text();
-  if (!res.ok) throw new Error(`Gemini image ${res.status}: ${text}`);
+  if (res.status === 404 || res.status === 400) return null; // try next candidate
+  if (!res.ok) throw new Error(`Gemini image ${res.status} (${model}): ${text}`);
   const json = JSON.parse(text) as {
     candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
   };
@@ -109,7 +119,44 @@ async function geminiImage(env: ScriptEnv, prompt: string): Promise<Buffer> {
   for (const p of parts) {
     if (p.inlineData?.data) return Buffer.from(p.inlineData.data, 'base64');
   }
-  throw new Error(`Gemini image: no inlineData in response: ${text.slice(0, 400)}`);
+  return null;
+}
+
+async function listAvailableImageModels(env: ScriptEnv): Promise<string[]> {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}&pageSize=200`;
+  const res = await fetch(url);
+  if (!res.ok) return [];
+  const json = (await res.json()) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[]; description?: string }> };
+  const out: string[] = [];
+  for (const m of json.models ?? []) {
+    if (!m.name) continue;
+    const desc = (m.description ?? '').toLowerCase();
+    if (m.supportedGenerationMethods?.includes('generateContent') && (desc.includes('image') || m.name.includes('image'))) {
+      out.push(m.name.replace(/^models\//, ''));
+    }
+  }
+  return out;
+}
+
+async function geminiImage(env: ScriptEnv, prompt: string): Promise<Buffer> {
+  if (RESOLVED_IMAGE_MODEL) {
+    const buf = await tryGeminiImage(env, RESOLVED_IMAGE_MODEL, prompt);
+    if (buf) return buf;
+    throw new Error(`Resolved model ${RESOLVED_IMAGE_MODEL} failed mid-run.`);
+  }
+  for (const m of IMAGE_MODEL_CANDIDATES) {
+    const buf = await tryGeminiImage(env, m, prompt);
+    if (buf) {
+      console.log(`  (resolved image model: ${m})`);
+      RESOLVED_IMAGE_MODEL = m;
+      return buf;
+    }
+  }
+  const available = await listAvailableImageModels(env);
+  throw new Error(
+    `No candidate image model worked: ${IMAGE_MODEL_CANDIDATES.join(', ')}\n` +
+      `Available image-capable models for this API key:\n  ${available.join('\n  ') || '(none found)'}`,
+  );
 }
 
 async function pickAudio(): Promise<string> {
@@ -234,7 +281,7 @@ async function main() {
   console.log(`  theme: ${spec.theme}`);
   console.log(`  caption: ${spec.caption}`);
 
-  console.log(`[2/5] Gemini image (${IMAGE_MODEL}): generating ${NUM_IMAGES} images...`);
+  console.log(`[2/5] Gemini image (candidates: ${IMAGE_MODEL_CANDIDATES.join(', ')}): generating ${NUM_IMAGES} images...`);
   const tmp = await mkdtemp(join(tmpdir(), 'reel-'));
   const imagePaths: string[] = [];
   for (let i = 0; i < spec.image_prompts.length; i++) {
