@@ -97,28 +97,46 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
 
       const data = { ...msg.data };
+      const trace = { resolve: null, media: null };
 
       // Step A: resolve s.shopee.vn → product URL (using user's session)
       let productUrl = data.product_url || null;
       if (!productUrl && /s\.shopee\.vn|shope\.ee/i.test(data.affiliate_url)) {
-        productUrl = await resolveShortLink(data.affiliate_url);
+        try {
+          productUrl = await resolveShortLink(data.affiliate_url);
+          trace.resolve = { ok: !!productUrl, url: productUrl };
+        } catch (err) {
+          trace.resolve = { ok: false, error: String(err).slice(0, 200) };
+        }
         console.log('[CV-bg] resolved:', productUrl);
+      } else {
+        trace.resolve = { ok: !!productUrl, url: productUrl, skipped: true };
       }
       if (productUrl) data.product_url = productUrl;
 
       // Step B: fetch Shopee item API for full media (still using session)
       if (productUrl) {
-        const media = await fetchShopeeMedia(productUrl);
-        console.log('[CV-bg] media result:', media.error ? { error: media.error } : { images: media.image_urls?.length, has_video: !!media.video_url });
-        if (!media.error) {
-          data.media_urls = media.image_urls;
-          data.video_url = media.video_url;
-          if (!data.title || data.title.length < 5) data.title = media.title;
-          data.shopee_shopid = media.shopid;
-          data.shopee_itemid = media.itemid;
-        } else {
-          data.media_fetch_error = media.error;
+        try {
+          const media = await fetchShopeeMedia(productUrl);
+          trace.media = media.error
+            ? { ok: false, error: media.error }
+            : { ok: true, images: media.image_urls?.length, has_video: !!media.video_url };
+          console.log('[CV-bg] media result:', trace.media);
+          if (!media.error) {
+            data.media_urls = media.image_urls;
+            data.video_url = media.video_url;
+            if (!data.title || data.title.length < 5) data.title = media.title;
+            data.shopee_shopid = media.shopid;
+            data.shopee_itemid = media.itemid;
+          } else {
+            data.media_fetch_error = media.error;
+          }
+        } catch (err) {
+          trace.media = { ok: false, error: String(err).slice(0, 200) };
+          data.media_fetch_error = String(err).slice(0, 200);
         }
+      } else {
+        trace.media = { ok: false, error: 'no productUrl to fetch from' };
       }
 
       // Step C: POST to Worker
@@ -138,13 +156,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         try { result = JSON.parse(text); } catch { result = { error: text.slice(0, 200) }; }
         console.log('[CV-bg] worker response', res.status, result);
         if (!res.ok) {
-          sendResponse({ ok: false, error: result.error || res.status });
+          sendResponse({ ok: false, error: result.error || res.status, trace });
           return;
         }
-        sendResponse({ ok: true, ...result });
+        sendResponse({ ok: true, ...result, trace });
       } catch (err) {
         console.error('[CV-bg] fetch error:', err);
-        sendResponse({ ok: false, error: String(err).slice(0, 200) });
+        sendResponse({ ok: false, error: String(err).slice(0, 200), trace });
       }
     })();
     return true;
