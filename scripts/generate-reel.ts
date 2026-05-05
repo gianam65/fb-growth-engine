@@ -20,16 +20,10 @@ import { join, resolve } from 'node:path';
 import { d1Query, loadEnv, type ScriptEnv } from './lib';
 
 const TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-// Image-capable model candidates, tried in order until one succeeds.
-// Override entirely with GEMINI_IMAGE_MODEL env (single name, no fallback).
-const IMAGE_MODEL_CANDIDATES = process.env.GEMINI_IMAGE_MODEL
-  ? [process.env.GEMINI_IMAGE_MODEL]
-  : [
-      'gemini-2.5-flash-image',
-      'gemini-2.5-flash-image-preview',
-      'gemini-2.0-flash-preview-image-generation',
-      'gemini-2.0-flash-exp',
-    ];
+// Image gen via Pollinations.ai — fully free, no key, FLUX backend.
+// Gemini Flash Image is paid-only on free tier accounts (limit=0).
+const IMAGE_PROVIDER = process.env.IMAGE_PROVIDER || 'pollinations';
+const POLLINATIONS_MODEL = process.env.POLLINATIONS_MODEL || 'flux';
 const NUM_IMAGES = 5;
 const SECONDS_PER_IMAGE = 3;
 const XFADE_DURATION = 0.6;
@@ -96,89 +90,48 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
   return out;
 }
 
-let RESOLVED_IMAGE_MODEL: string | null = null;
-
-function parseRetryDelaySec(text: string): number {
-  // Gemini error body has: { error: { details: [{ "@type": ".../RetryInfo", retryDelay: "32s" }] } }
-  const m = text.match(/"retryDelay":\s*"(\d+)s"/);
-  if (m && m[1]) return Number(m[1]);
-  return 30; // default
-}
-
-async function tryGeminiImage(
-  env: ScriptEnv,
-  model: string,
-  prompt: string,
-  maxRetries = 4,
-): Promise<Buffer | null> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${env.GEMINI_API_KEY}`;
-  const body = {
-    contents: [{ parts: [{ text: prompt }] }],
-    generationConfig: { responseModalities: ['IMAGE'] },
-  };
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    const res = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    });
-    const text = await res.text();
-    if (res.status === 404 || res.status === 400) return null; // try next candidate (model not found)
-    if (res.status === 429) {
-      if (attempt === maxRetries) throw new Error(`Gemini image rate-limited after ${maxRetries} retries (${model}): ${text.slice(0, 400)}`);
-      const wait = parseRetryDelaySec(text) + 2;
-      console.log(`    [429 rate-limited, sleeping ${wait}s, attempt ${attempt + 1}/${maxRetries}]`);
-      await new Promise((r) => setTimeout(r, wait * 1000));
-      continue;
-    }
-    if (!res.ok) throw new Error(`Gemini image ${res.status} (${model}): ${text}`);
-    const json = JSON.parse(text) as {
-      candidates?: Array<{ content?: { parts?: Array<{ inlineData?: { data?: string; mimeType?: string } }> } }>;
-    };
-    const parts = json.candidates?.[0]?.content?.parts ?? [];
-    for (const p of parts) {
-      if (p.inlineData?.data) return Buffer.from(p.inlineData.data, 'base64');
-    }
-    return null;
-  }
-  return null;
-}
-
-async function listAvailableImageModels(env: ScriptEnv): Promise<string[]> {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models?key=${env.GEMINI_API_KEY}&pageSize=200`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const json = (await res.json()) as { models?: Array<{ name?: string; supportedGenerationMethods?: string[]; description?: string }> };
-  const out: string[] = [];
-  for (const m of json.models ?? []) {
-    if (!m.name) continue;
-    const desc = (m.description ?? '').toLowerCase();
-    if (m.supportedGenerationMethods?.includes('generateContent') && (desc.includes('image') || m.name.includes('image'))) {
-      out.push(m.name.replace(/^models\//, ''));
-    }
-  }
-  return out;
-}
-
-async function geminiImage(env: ScriptEnv, prompt: string): Promise<Buffer> {
-  if (RESOLVED_IMAGE_MODEL) {
-    const buf = await tryGeminiImage(env, RESOLVED_IMAGE_MODEL, prompt);
-    if (buf) return buf;
-    throw new Error(`Resolved model ${RESOLVED_IMAGE_MODEL} failed mid-run.`);
-  }
-  for (const m of IMAGE_MODEL_CANDIDATES) {
-    const buf = await tryGeminiImage(env, m, prompt);
-    if (buf) {
-      console.log(`  (resolved image model: ${m})`);
-      RESOLVED_IMAGE_MODEL = m;
+async function pollinationsImage(prompt: string, seed: number): Promise<Buffer> {
+  // Free, no API key. Docs: https://github.com/pollinations/pollinations
+  // GET https://image.pollinations.ai/prompt/<text>?width=1080&height=1920&model=flux&seed=<n>&nologo=true
+  const params = new URLSearchParams({
+    width: '1080',
+    height: '1920',
+    model: POLLINATIONS_MODEL,
+    seed: String(seed),
+    nologo: 'true',
+    enhance: 'false',
+  });
+  const url = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params}`;
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const ctl = new AbortController();
+    const t = setTimeout(() => ctl.abort(), 90_000);
+    try {
+      const res = await fetch(url, { signal: ctl.signal });
+      clearTimeout(t);
+      if (res.status === 429 || res.status >= 500) {
+        const wait = 5 + attempt * 5;
+        console.log(`    [pollinations ${res.status}, sleeping ${wait}s, retry ${attempt + 1}/4]`);
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
+      }
+      if (!res.ok) throw new Error(`Pollinations ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length < 5_000) throw new Error(`Pollinations returned tiny image (${buf.length} bytes)`);
       return buf;
+    } catch (err) {
+      clearTimeout(t);
+      if (attempt === 3) throw err;
+      const wait = 5 + attempt * 5;
+      console.log(`    [pollinations error: ${String(err).slice(0, 80)}, retry ${attempt + 1}/4 in ${wait}s]`);
+      await new Promise((r) => setTimeout(r, wait * 1000));
     }
   }
-  const available = await listAvailableImageModels(env);
-  throw new Error(
-    `No candidate image model worked: ${IMAGE_MODEL_CANDIDATES.join(', ')}\n` +
-      `Available image-capable models for this API key:\n  ${available.join('\n  ') || '(none found)'}`,
-  );
+  throw new Error('pollinations exhausted retries');
+}
+
+async function genImage(_env: ScriptEnv, prompt: string, seed: number): Promise<Buffer> {
+  if (IMAGE_PROVIDER === 'pollinations') return pollinationsImage(prompt, seed);
+  throw new Error(`Unknown IMAGE_PROVIDER=${IMAGE_PROVIDER}`);
 }
 
 async function pickAudio(): Promise<string> {
@@ -303,19 +256,20 @@ async function main() {
   console.log(`  theme: ${spec.theme}`);
   console.log(`  caption: ${spec.caption}`);
 
-  console.log(`[2/5] Gemini image (candidates: ${IMAGE_MODEL_CANDIDATES.join(', ')}): generating ${NUM_IMAGES} images...`);
+  console.log(`[2/5] Image gen (${IMAGE_PROVIDER}/${POLLINATIONS_MODEL}): generating ${NUM_IMAGES} images...`);
   const tmp = await mkdtemp(join(tmpdir(), 'reel-'));
   const imagePaths: string[] = [];
-  // Free-tier image gen has tight RPM. Sleep between calls to spread load.
-  const interImageSleep = Number(process.env.IMAGE_INTER_SLEEP_SEC || 8);
+  const interImageSleep = Number(process.env.IMAGE_INTER_SLEEP_SEC || 2);
+  const seedBase = Math.floor(Date.now() / 1000) % 1_000_000;
   for (let i = 0; i < spec.image_prompts.length; i++) {
     const prompt = spec.image_prompts[i]!;
     process.stdout.write(`  img ${i + 1}/${NUM_IMAGES}... `);
-    const buf = await geminiImage(env, prompt);
+    const t0 = Date.now();
+    const buf = await genImage(env, prompt, seedBase + i);
     const path = join(tmp, `img-${i}.png`);
     await writeFile(path, buf);
     imagePaths.push(path);
-    console.log(`${(buf.length / 1024).toFixed(0)}KB`);
+    console.log(`${(buf.length / 1024).toFixed(0)}KB in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
     if (i < spec.image_prompts.length - 1 && interImageSleep > 0) {
       await new Promise((r) => setTimeout(r, interImageSleep * 1000));
     }
