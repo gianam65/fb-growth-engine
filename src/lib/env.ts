@@ -16,6 +16,7 @@ export interface Env {
   GEMINI_API_KEY: string;
   TELEGRAM_BOT_TOKEN: string;
   TELEGRAM_CHAT_ID: string;
+  ADMIN_TOKEN: string;
 }
 
 export type FbEvent =
