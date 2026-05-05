@@ -2,11 +2,19 @@
 
 const $ = (id) => document.getElementById(id);
 
+// Use sync storage so settings persist across reloads + sync to Chrome account.
+// Falls back to local if sync unavailable (e.g., user not signed in).
 async function getStored() {
+  try {
+    const sync = await chrome.storage.sync.get(['workerUrl', 'adminToken']);
+    if (sync.workerUrl && sync.adminToken) return sync;
+  } catch {}
   return await chrome.storage.local.get(['workerUrl', 'adminToken']);
 }
 
 async function setStored(data) {
+  // Write to BOTH for redundancy
+  try { await chrome.storage.sync.set(data); } catch {}
   await chrome.storage.local.set(data);
 }
 
@@ -113,6 +121,15 @@ $('openSettings').addEventListener('click', async () => {
   $('adminToken').value = cfg.adminToken ?? '';
   showSettings();
 });
+
+async function openPoolPage(path) {
+  const cfg = await getStored();
+  if (!cfg.workerUrl || !cfg.adminToken) return;
+  const url = cfg.workerUrl.replace(/\/+$/, '') + path + '?key=' + encodeURIComponent(cfg.adminToken);
+  chrome.tabs.create({ url });
+}
+$('viewAffiliate').addEventListener('click', () => openPoolPage('/admin/affiliate'));
+$('viewPhotos').addEventListener('click', () => openPoolPage('/admin/curate'));
 
 $('save').addEventListener('click', async () => {
   hideMsg();
