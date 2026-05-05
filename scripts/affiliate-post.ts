@@ -13,8 +13,9 @@ interface AffRow {
   title: string | null;
   affiliate_url: string;
   product_url: string | null;
-  media_urls: string | null;   // JSON array
+  media_urls: string | null;   // JSON array of image URLs (best case)
   video_url: string | null;
+  image_url: string | null;    // single thumbnail from listing card (fallback)
   used_count: number;
   last_used_at: number | null;
 }
@@ -147,13 +148,18 @@ async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption:
 async function main() {
   const env = loadEnv();
 
-  console.log('[1/4] Picking oldest-unused affiliate product with media…');
+  console.log('[1/4] Picking oldest-unused affiliate product (with any image)…');
+  // Accept any product that has at least one image source (media_urls OR
+  // image_url thumbnail) OR a video. Shopee's anti-bot often blocks extension
+  // from getting full media → image_url (listing thumbnail) is the reliable
+  // fallback for a single-photo post.
   const rows = await d1Query<AffRow>(
     env,
-    `SELECT id, title, affiliate_url, product_url, media_urls, video_url, used_count, last_used_at
+    `SELECT id, title, affiliate_url, product_url, media_urls, video_url, image_url,
+            used_count, last_used_at
        FROM affiliate_products
       WHERE status = 'APPROVED'
-        AND (media_urls IS NOT NULL OR video_url IS NOT NULL)
+        AND (media_urls IS NOT NULL OR video_url IS NOT NULL OR image_url IS NOT NULL)
       ORDER BY COALESCE(last_used_at, 0) ASC, id ASC
       LIMIT 1`,
   );
@@ -164,15 +170,21 @@ async function main() {
   }
   console.log(`  picked id=${row.id}: ${row.title?.slice(0, 80) || '(no title)'}`);
 
+  // Image sources in priority order: media_urls > image_url thumbnail
   const images: string[] = (() => {
-    try { return JSON.parse(row.media_urls ?? '[]'); } catch { return []; }
+    try {
+      const fromMedia = JSON.parse(row.media_urls ?? '[]');
+      if (Array.isArray(fromMedia) && fromMedia.length > 0) return fromMedia;
+    } catch {}
+    if (row.image_url) return [row.image_url];
+    return [];
   })();
   const hasVideo = !!row.video_url;
   const hasImages = images.length > 0;
   console.log(`  has_video=${hasVideo}, images=${images.length}`);
 
   if (!hasVideo && !hasImages) {
-    throw new Error(`Product id=${row.id} has neither images nor video`);
+    throw new Error(`Product id=${row.id} has no media`);
   }
 
   const kind: 'reels' | 'photo' = hasVideo ? 'reels' : 'photo';
