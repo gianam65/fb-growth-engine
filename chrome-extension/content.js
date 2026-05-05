@@ -4,7 +4,7 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
-const CV_VERSION = '1.8.2';
+const CV_VERSION = '1.8.3';
 
 (() => {
   if (window.__cvInjected) return;
@@ -261,52 +261,51 @@ const CV_VERSION = '1.8.2';
         product_url: data.product_url,
       });
 
-      // Step 1: clipboard (user may have already copied link manually)
-      affUrl = await readClipboardShopeeUrl();
-      if (affUrl) console.log('[CV] step 1 — clipboard had URL:', affUrl);
+      // Step 1: ALWAYS click Lấy link button on THIS card first (if found)
+      // This ensures we get a fresh URL specific to this product, not stale
+      // clipboard contents from a previous save on another card.
+      const getLinkBtn = findGetLinkButton(card);
+      if (getLinkBtn) {
+        console.log('[CV] step 1 — clicking Get Link button:', visibleText(getLinkBtn, 30));
+        // Capture clipboard BEFORE click to detect fresh changes
+        const beforeUrl = await readClipboardShopeeUrl();
 
-      // Step 2: scan current DOM (modal might already be open with the link)
-      if (!affUrl) {
-        affUrl = scanDomForShopeeUrl();
-        if (affUrl) console.log('[CV] step 2 — DOM scan found URL:', affUrl);
-      }
+        getLinkBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+        getLinkBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+        getLinkBtn.click();
 
-      // Step 3: try to programmatically click Shopee's Get Link button on the card
-      if (!affUrl) {
-        const getLinkBtn = findGetLinkButton(card);
-        if (!getLinkBtn) {
-          console.warn('[CV] step 3 — no Get Link button found on card. Buttons inside card:',
-            Array.from(card.querySelectorAll('button, a[role="button"], div[role="button"], a, [class*="btn"], [class*="Button"]'))
-              .map((b) => ({ text: visibleText(b, 50), aria: b.getAttribute('aria-label'), cls: b.className?.slice(0, 80) })),
-          );
-        } else {
-          console.log('[CV] step 3 — clicking Get Link button:', visibleText(getLinkBtn, 30), getLinkBtn);
-          // Use full event sequence in case .click() alone is intercepted
-          getLinkBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-          getLinkBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-          getLinkBtn.click();
+        await new Promise((r) => setTimeout(r, 600));
+        const copied = tryClickInModal();
+        console.log('[CV] step 1 — auto-clicked Sao chép?', copied);
 
-          // Brief pause for modal to render, then auto-click Sao chép button
-          await new Promise((r) => setTimeout(r, 600));
-          const copied = tryClickInModal();
-          console.log('[CV] step 3 — auto-clicked Sao chép?', copied);
-          if (copied) {
-            await new Promise((r) => setTimeout(r, 350));
-            affUrl = (await readClipboardShopeeUrl()) || scanDomForShopeeUrl();
-            if (affUrl) console.log('[CV] step 3 — got URL after Sao chép:', affUrl);
+        // Wait for clipboard to update with NEW URL (different from before)
+        for (let i = 0; i < 20; i++) {
+          await new Promise((r) => setTimeout(r, 200));
+          const cur = await readClipboardShopeeUrl();
+          if (cur && cur !== beforeUrl) {
+            affUrl = cur;
+            console.log('[CV] step 1 — fresh URL after Sao chép:', affUrl);
+            break;
           }
-          if (!affUrl) {
-            console.log('[CV] step 3 — waiting up to 5s for URL in DOM…');
-            try {
-              affUrl = await waitForShopeeUrl(5000);
-              console.log('[CV] step 3 — DOM observer caught URL:', affUrl);
-            } catch {
-              affUrl = (await readClipboardShopeeUrl()) || null;
-              if (affUrl) console.log('[CV] step 3 — clipboard finally had URL:', affUrl);
-            }
-          }
-          tryCloseModal();
         }
+
+        // Fallback: scan DOM in case modal still showing
+        if (!affUrl) {
+          affUrl = scanDomForShopeeUrl();
+          if (affUrl && affUrl !== beforeUrl) {
+            console.log('[CV] step 1 — fresh URL from DOM:', affUrl);
+          } else {
+            affUrl = null;
+          }
+        }
+        tryCloseModal();
+      } else {
+        // No Get Link button → fall back to whatever's in clipboard right now
+        // (user may have copied manually).
+        console.warn('[CV] step 1 — no Get Link button on card');
+        affUrl = await readClipboardShopeeUrl();
+        if (!affUrl) affUrl = scanDomForShopeeUrl();
+        if (affUrl) console.log('[CV] step 1 — fallback to existing clipboard/DOM:', affUrl);
       }
 
       // Step 4: hybrid "armed" mode — if auto-click couldn't find/click button,
