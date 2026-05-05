@@ -17,15 +17,21 @@ import { execSync } from 'node:child_process';
 import { d1Query, loadEnv, tgSend, type ScriptEnv } from './lib';
 
 const TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-const POLLINATIONS_MODEL = process.env.POLLINATIONS_MODEL || 'flux';
+// flux-realism is specialized for photorealistic photo output → noticeably sharper
+// than base flux on FLUX-1 backbone. Falls back to flux if not available.
+const POLLINATIONS_MODEL = process.env.POLLINATIONS_MODEL || 'flux-realism';
 const NUM_IMAGES = Number(process.env.NUM_IMAGES || 5);
+// 4:5 portrait (1440x1800) — FB feed displays full width; high-res = sharper.
+const IMG_WIDTH = Number(process.env.IMG_WIDTH || 1440);
+const IMG_HEIGHT = Number(process.env.IMG_HEIGHT || 1800);
 
 const STYLE_PRESETS: Record<string, { suffix: string; vibe_hint: string }> = {
   'asian-cozy': {
+    // Lighting tokens first — FLUX prioritizes early tokens, so warm tone leads.
     suffix:
-      'modern asian apartment cozy aesthetic, xiaohongshu home decor style, douyin cozy room, lots of indoor plants, monstera fiddle leaf snake plant, hanging vines, light oak wood floor, beige neutral walls, white minimalist furniture, rattan chair, rice paper pendant lamp, paper lantern, warm tungsten lighting, golden hour soft natural light from large window, biophilic interior, lush greenery, lived-in cozy vibe, 35mm film, Kodak Portra 400, photorealistic, sharp focus, magazine quality, no people, no text, no logos',
+      'warm amber tungsten lighting, golden hour sunset glow streaming through a large window, honey-colored ambient light, warm orange and yellow color grading, soft glowing rice paper lantern. Modern asian apartment cozy aesthetic, xiaohongshu home decor style, douyin cozy room interior, warm beige walls, light oak wood floor, white minimalist furniture, rattan chair, lots of indoor plants, monstera fiddle leaf fig snake plant, hanging pothos vines, biophilic lush greenery, lived-in cozy vibe. Ultra sharp focus, high detail, 8k photorealistic, professional interior photography, Sony A7IV 50mm f/1.8, magazine cover quality. No people, no text, no logos.',
     vibe_hint:
-      'modern Asian apartment with rice paper lamps, lots of plants (monstera, fiddle leaf), wood floor, beige walls, large window, white desk',
+      'modern Asian apartment with warm tungsten glow, rice paper lamp, lots of plants (monstera, fiddle leaf), wood floor, warm beige walls, large window, golden hour mood',
   },
   japandi: {
     suffix:
@@ -120,8 +126,8 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
 
 async function pollinationsImage(prompt: string, seed: number): Promise<Buffer> {
   const params = new URLSearchParams({
-    width: '1080',
-    height: '1350', // 4:5 portrait — best for FB feed (vertical but not as tall as 9:16)
+    width: String(IMG_WIDTH),
+    height: String(IMG_HEIGHT),
     model: POLLINATIONS_MODEL,
     seed: String(seed),
     nologo: 'true',
