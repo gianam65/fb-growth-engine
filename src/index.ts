@@ -5,6 +5,7 @@ import { makeLogger } from '@/lib/logger';
 import { handleAdminCurate } from '@/admin/curate';
 import { handleAdminPinterest } from '@/admin/pinterest';
 import { handleAdminAdd } from '@/admin/add';
+import { handleAdminAffiliate } from '@/admin/affiliate';
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -14,6 +15,7 @@ export default {
     if (url.pathname.startsWith('/admin/curate')) return handleAdminCurate(req, env);
     if (url.pathname.startsWith('/admin/pinterest')) return handleAdminPinterest(req, env);
     if (url.pathname.startsWith('/admin/add')) return handleAdminAdd(req, env);
+    if (url.pathname.startsWith('/admin/affiliate')) return handleAdminAffiliate(req, env);
     return new Response('not found', { status: 404 });
   },
 
