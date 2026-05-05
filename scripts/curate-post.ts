@@ -38,20 +38,22 @@ function captionPrompt(theme: string, photos: CaptionPhoto[]): string {
   const items = photos
     .map((p, i) => `  ${i + 1}. ${p.alt?.slice(0, 200) || '(no alt text)'}`)
     .join('\n');
-  return `You write Vietnamese captions for a cozy/decor Facebook page "Cozy Vibe".
+  return `You write SHORT English captions for a cozy/aesthetic Facebook page "Cozy Vibe".
 
 Today's theme: ${theme}
-The carousel has ${photos.length} curated photos:
+Carousel has ${photos.length} photo(s):
 ${items}
 
 Output JSON with:
-- caption: 2-3 sentences in casual Vietnamese, evocative, NOT salesy. Open with a hook (a question, a feeling, a small moment). May contain 1-2 emojis sparingly inside the body. Reference the actual photo content gently — don't list it.
-  Tone examples:
-    "Trời mưa, mở đèn vàng lên là thấy cả căn phòng dịu lại. Tự dưng chỉ muốn pha một ấm trà rồi ngồi yên 🍵"
-    "Có những góc nhỏ chỉ cần ánh đèn vàng và vài cuốn sách là đủ thấy mình ở nhà rồi."
-    "Cuối ngày về tới phòng, cây cối, đèn vàng và mùi nến — cảm giác này khó tả lắm."
-- hashtags: single line of 8-12 hashtags, mix Vietnamese + English. Always include #cozyvibe.
-  Suggested pool: #cozyvibe #nhaxinh #goccay #decor #trangtrinoithat #aestheticroom #xiaohongshu #douyinstyle #plantparent #studioapartment #cozyroom #lofi #chillvibes #goclam #songcham.
+- caption: ONE short line in English, max 10 words. Aesthetic, calm, understated. NOT cheesy, NOT salesy, NO clichés like "find your peace" / "embrace the moment". No emojis. Lowercase preferred. Examples:
+    "soft evening, golden lamp, just enough light."
+    "a quiet corner. that's the whole post."
+    "warm walls and soft footsteps."
+    "home, but slower."
+    "lamp on. world off."
+    "just plants and a kettle. that's it."
+- hashtags: single line of 8-12 English hashtags only. Always include #cozyvibe. No Vietnamese tags.
+  Pool: #cozyvibe #cozyhome #cozyaesthetic #aestheticroom #homedecor #interiordesign #cozycorner #warmlight #cozyspace #homeaesthetic #cozyvibesonly #coziness #moodyhome #softaesthetic #lofivibes #plantsofinstagram.
 
 Return ONLY JSON, no markdown fence.`;
 }
@@ -61,7 +63,7 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
   const body = {
     contents: [{ parts: [{ text: prompt }] }],
     generationConfig: {
-      temperature: 0.85,
+      temperature: 0.7,
       maxOutputTokens: 1500,
       responseMimeType: 'application/json',
       responseSchema: schema,
@@ -237,7 +239,7 @@ async function main() {
     console.log(`  ${i + 1}/${rows.length}: ${(buf.length / 1024).toFixed(0)}KB by ${photo.photographer} → ${id}`);
   }
 
-  const photographers = [...new Set(rows.map((r) => r.photographer))];
+  // Track credits in DB metadata (still useful for audit), but DO NOT show on FB.
   const credits = rows.map((r) => ({
     photographer: r.photographer,
     photographer_url: r.photographer_url,
@@ -245,7 +247,7 @@ async function main() {
     source: r.source,
     photo_url: r.source_url,
   }));
-  const message = `${captionSpec.caption}\n\n📷 Ảnh: ${photographers.join(', ')} (Pexels)\n\n${captionSpec.hashtags}`;
+  const message = `${captionSpec.caption}\n\n${captionSpec.hashtags}`;
 
   console.log(`[4/5] Publishing feed post...`);
   const fbPostId = await publishFeedPost(env, mediaIds, message);
@@ -280,7 +282,7 @@ async function main() {
 
   await tgSend(
     env,
-    `✅ FB post published (curated)\n*${themeFallback}*\n${captionSpec.caption}\n📷 ${photographers.join(', ')}\nhttps://www.facebook.com/${fbPostId}`,
+    `✅ FB post published\n${captionSpec.caption}\nhttps://www.facebook.com/${fbPostId}`,
   );
   console.log(`\nDone.`);
 }
