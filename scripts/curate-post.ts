@@ -12,7 +12,7 @@
 import { d1Query, loadEnv, tgSend, type ScriptEnv } from './lib';
 
 const TEXT_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash-lite';
-const NUM_IMAGES = Number(process.env.NUM_IMAGES || 5);
+// NUM_IMAGES is no longer used — set sizes are determined by what user pastes.
 
 const STYLE_PRESET = process.env.STYLE_PRESET || 'asian-cozy';
 
@@ -149,40 +149,52 @@ async function main() {
   const env = loadEnv();
   const args = parseArgs();
 
-  console.log(`[1/5] Picking ${NUM_IMAGES} oldest-unused APPROVED photos from curated pool...`);
-  const targetN = args.preview > 0 ? Math.min(args.preview, NUM_IMAGES) : NUM_IMAGES;
+  console.log(`[1/5] Picking the oldest-unused APPROVED set from curated pool...`);
+  // 1. Find next set: aggregate per set_id, pick the one with smallest max(last_used_at)
+  const nextSet = await d1Query<{ set_id: string; cnt: number; last_used: number | null }>(
+    env,
+    `SELECT set_id,
+            COUNT(*) AS cnt,
+            MAX(COALESCE(last_used_at, 0)) AS last_used
+       FROM curated_photos
+      WHERE status = 'APPROVED' AND set_id IS NOT NULL
+      GROUP BY set_id
+      ORDER BY last_used ASC, MIN(id) ASC
+      LIMIT 1`,
+  );
+  const setId = nextSet[0]?.set_id;
+  if (!setId) {
+    throw new Error(
+      `Pool is empty: 0 APPROVED sets. Add photos via /admin/add (each submit = 1 set).`,
+    );
+  }
+  // 2. Fetch all photos in that set, ordered by set_order
   const rows = await d1Query<PoolRow>(
     env,
     `SELECT id, source, source_id, source_url, image_url, photographer, photographer_url, alt, width, height
-     FROM curated_photos
-     WHERE status = 'APPROVED'
-     ORDER BY COALESCE(last_used_at, 0) ASC, id ASC
-     LIMIT ?`,
-    [targetN],
+       FROM curated_photos
+      WHERE status = 'APPROVED' AND set_id = ?
+      ORDER BY set_order ASC, id ASC`,
+    [setId],
   );
-  if (rows.length < 1) {
-    throw new Error(
-      `Pool is empty: 0 APPROVED photos. Run "npm run script:populate-pool" then review at /admin/curate?key=...`,
-    );
-  }
-  if (rows.length < targetN) {
-    console.warn(`⚠ Only ${rows.length}/${targetN} approved photos available — proceeding.`);
-  }
+  console.log(`  set_id: ${setId} (${rows.length} photo${rows.length === 1 ? '' : 's'})`);
   for (const p of rows) {
-    console.log(`  📷 ${p.photographer} (${p.source}:${p.source_id}, ${p.width}x${p.height})`);
+    console.log(`  📷 ${p.photographer ?? '(unknown)'} (${p.source}:${p.source_id}, ${p.width}x${p.height})`);
     console.log(`      alt: ${p.alt?.slice(0, 100) || '(none)'}`);
   }
 
-  // Notify if pool is running low (< 7 days runway = 35 photos)
+  // Pool runway: count of unused sets
   const remaining = await d1Query<{ c: number }>(
     env,
-    `SELECT COUNT(*) as c FROM curated_photos WHERE status='APPROVED' AND (last_used_at IS NULL OR last_used_at < unixepoch() - 7*24*3600)`,
+    `SELECT COUNT(DISTINCT set_id) as c
+       FROM curated_photos
+      WHERE status='APPROVED' AND (last_used_at IS NULL OR last_used_at < unixepoch() - 7*24*3600)`,
   );
   const remCount = remaining[0]?.c ?? 0;
-  if (remCount <= 10) {
+  if (remCount <= 3) {
     await tgSend(
       env,
-      `⚠ Curated pool low: ${remCount} unused APPROVED photos left.\nRun \`npm run script:populate-pool\` and review pending at /admin/curate?key=...`,
+      `⚠ Curated pool low: ${remCount} unused APPROVED sets left.\nAdd more sets via /admin/add?key=…`,
     );
   }
 

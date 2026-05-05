@@ -49,8 +49,9 @@ const ADD_HTML = (key: string) => `<!doctype html>
 </div>
 <div class="stats" id="stats">…</div>
 
-<div class="label">Image URL (right-click any image → Copy Image Address)</div>
-<textarea id="urls" placeholder="https://i.pinimg.com/...&#10;&#10;Multiple URLs OK — one per line"></textarea>
+<div class="label">Image URLs — one per line. <b>Each submit = 1 SET = 1 FB post.</b></div>
+<textarea id="urls" placeholder="https://i.pinimg.com/photo-of-room-wide-shot.jpg&#10;https://i.pinimg.com/photo-of-same-room-close-up.jpg&#10;https://i.pinimg.com/photo-of-same-room-detail.jpg"></textarea>
+<div class="hint" style="margin-top:6px">Pin 2-3 ảnh CÙNG 1 phòng (góc khác nhau) → paste cả 3 cùng lần để chúng được nhóm vào 1 set. Daily cron sẽ pick từng set → mỗi post là 1 set coherent.</div>
 
 <div class="label">Source label <span style="opacity:.5">(optional, e.g. pinterest, instagram, xhs)</span></div>
 <input id="source" type="text" placeholder="pinterest" value="pinterest">
@@ -91,16 +92,19 @@ const ADD_HTML = (key: string) => `<!doctype html>
     if (urls.length === 0) { alert('Paste at least one URL'); return; }
     const source = $('source').value.trim() || 'manual';
     const alt = $('alt').value.trim();
+    // All URLs in this submit share one set_id = one FB carousel post
+    const setId = 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     $btn.disabled = true;
     $result.innerHTML = '';
     const lines = [];
     let ok = 0, fail = 0;
-    for (const url of urls) {
+    for (let i = 0; i < urls.length; i++) {
+      const url = urls[i];
       try {
         const res = await fetch('/admin/add/url?key=' + encodeURIComponent(KEY), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, source, alt }),
+          body: JSON.stringify({ url, source, alt, set_id: setId, set_order: i }),
         });
         const data = await res.json();
         if (res.ok) {
@@ -115,7 +119,8 @@ const ADD_HTML = (key: string) => `<!doctype html>
         lines.push('<div class="result err">✗ ' + err.message + ': ' + url + '</div>');
       }
     }
-    $result.innerHTML = lines.join('') + '<div class="hint" style="margin-top:14px">Done: ' + ok + ' added, ' + fail + ' failed.</div>';
+    const setSummary = ok > 0 ? ' as 1 set (' + ok + ' photos = 1 FB post)' : '';
+    $result.innerHTML = lines.join('') + '<div class="hint" style="margin-top:14px">Done: ' + ok + ' added' + setSummary + ', ' + fail + ' failed.</div>';
     if (ok > 0) {
       $('urls').value = '';
       $('alt').value = '';
@@ -142,7 +147,7 @@ export async function handleAdminAdd(req: Request, env: Env): Promise<Response> 
   }
 
   if (req.method === 'POST' && sub === '/url') {
-    const body = await req.json<{ url?: string; source?: string; alt?: string }>();
+    const body = await req.json<{ url?: string; source?: string; alt?: string; set_id?: string; set_order?: number }>();
     const photoUrl = body.url?.trim();
     if (!photoUrl || !/^https?:\/\//i.test(photoUrl)) {
       return Response.json({ error: 'invalid url' }, { status: 400 });
@@ -173,10 +178,10 @@ export async function handleAdminAdd(req: Request, env: Env): Promise<Response> 
     }
 
     const source = (body.source || 'manual').slice(0, 30);
-    // Use a hash-ish id derived from URL since there's no source id
     const sourceId = photoUrl.length > 64 ? photoUrl.slice(-64) : photoUrl;
+    const setId = body.set_id || `set-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const setOrder = body.set_order ?? 0;
 
-    // Check if exists
     const existing = await env.DB.prepare(
       `SELECT id FROM curated_photos WHERE source = ? AND source_id = ?`,
     )
@@ -189,14 +194,14 @@ export async function handleAdminAdd(req: Request, env: Env): Promise<Response> 
     const result = await env.DB.prepare(
       `INSERT INTO curated_photos
          (source, source_id, source_url, image_url, thumb_url, photographer, alt,
-          width, height, search_keyword, status, decided_at)
-       VALUES (?, ?, ?, ?, ?, NULL, ?, 0, 0, 'manual-paste', 'APPROVED', unixepoch())
+          width, height, search_keyword, status, decided_at, set_id, set_order)
+       VALUES (?, ?, ?, ?, ?, NULL, ?, 0, 0, 'manual-paste', 'APPROVED', unixepoch(), ?, ?)
        RETURNING id`,
     )
-      .bind(source, sourceId, photoUrl, photoUrl, photoUrl, body.alt ?? null)
+      .bind(source, sourceId, photoUrl, photoUrl, photoUrl, body.alt ?? null, setId, setOrder)
       .first<{ id: number }>();
 
-    return Response.json({ ok: true, id: result?.id, source, content_type: contentType });
+    return Response.json({ ok: true, id: result?.id, set_id: setId, set_order: setOrder, source, content_type: contentType });
   }
 
   return new Response('not found', { status: 404 });
