@@ -38,21 +38,25 @@ function captionPrompt(theme: string, photos: CaptionPhoto[]): string {
   const items = photos
     .map((p, i) => `  ${i + 1}. ${p.alt?.slice(0, 200) || '(no alt text)'}`)
     .join('\n');
-  return `You write SHORT English captions for a cozy/aesthetic Facebook page "Cozy Vibe".
+  return `You write ULTRA-SHORT English captions for a cozy/aesthetic Facebook page "Cozy Vibe".
 
 Today's theme: ${theme}
 Carousel has ${photos.length} photo(s):
 ${items}
 
 Output JSON with:
-- caption: ONE short line in English, max 10 words. Aesthetic, calm, understated. NOT cheesy, NOT salesy, NO clichés like "find your peace" / "embrace the moment". No emojis. Lowercase preferred. Examples:
-    "soft evening, golden lamp, just enough light."
-    "a quiet corner. that's the whole post."
-    "warm walls and soft footsteps."
-    "home, but slower."
-    "lamp on. world off."
-    "just plants and a kettle. that's it."
-- hashtags: single line of 8-12 English hashtags only. Always include #cozyvibe. No Vietnamese tags.
+- caption: 2-4 words of lowercase English + ONE small emoji at the end.
+  Aesthetic, calm. NOT cheesy, NO clichés. Pick a vibe word that fits the photos.
+  Examples:
+    "quiet room ✨"
+    "peace 🌿"
+    "warm corners 🍂"
+    "slow morning ☕"
+    "soft hours 🕯️"
+    "home things 🪴"
+    "golden hour 🌤️"
+    "rainy nights 🌧️"
+- hashtags: single line of 8-12 English hashtags only. Always include #cozyvibe.
   Pool: #cozyvibe #cozyhome #cozyaesthetic #aestheticroom #homedecor #interiordesign #cozycorner #warmlight #cozyspace #homeaesthetic #cozyvibesonly #coziness #moodyhome #softaesthetic #lofivibes #plantsofinstagram.
 
 Return ONLY JSON, no markdown fence.`;

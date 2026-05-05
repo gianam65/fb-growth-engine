@@ -35,19 +35,20 @@ const CAPTION_SCHEMA = {
 };
 
 function captionPrompt(title: string | null, kind: 'reels' | 'photo'): string {
-  return `Write a SHORT English caption for a Vietnamese cozy decor Facebook page "Cozy Vibe" promoting this product:
+  return `Write a SHORT casual Vietnamese hook for this Shopee product on a cozy decor Facebook page "Cozy Vibe":
 ${title ? `"${title}"` : '(no title — guess from context: cozy home decor)'}
 
-Output kind: ${kind === 'reels' ? 'short video Reels' : 'photo post'}.
+Output kind: ${kind === 'reels' ? 'Reels' : 'photo post'}.
 
 Output JSON:
-- caption: 1 short line in English (max 12 words). Aesthetic, soft sell, NOT pushy. NO clichés like "shop the vibe" / "tag a friend". Mention the product gently. Example tones:
-    "warm corners deserve good lighting."
-    "every studio needs a quiet bookshelf."
-    "found this — couldn't scroll past."
-    "small upgrades. big mood shift."
-    "the kind of detail that makes a room."
-- hashtags: 8-10 English hashtags single line, including #cozyvibe #cozyhome.
+- caption: a SHORT Vietnamese hook, 4-8 words, casual/playful, references the product type briefly. NOT salesy, NOT clichéd. Examples:
+    "Bàn đẹp ở đây nhé ạ"
+    "Đèn này cute thật sự"
+    "Cái này đáng để rinh"
+    "Góc decor xinh quá đi"
+    "Decor cho phòng nhỏ nè"
+    "Có cái này phòng auto chill"
+- hashtags: 5-8 short Vietnamese hashtags single line, including #cozyvibe #nhaxinh.
 
 Return JSON only.`;
 }
@@ -196,13 +197,8 @@ async function main() {
   console.log(`  caption: ${captionSpec.caption}`);
   console.log(`  hashtags: ${captionSpec.hashtags}`);
 
-  // Caption layout:
-  //   <caption>
-  //
-  //   🛍️ <affiliate_url>
-  //
-  //   <hashtags>
-  const message = `${captionSpec.caption}\n\n🛍️ ${row.affiliate_url}\n\n${captionSpec.hashtags}`;
+  // Caption layout: ✨ {hook}: {affiliate_url}\n\n{hashtags}
+  const message = `✨ ${captionSpec.caption}: ${row.affiliate_url}\n\n${captionSpec.hashtags}`;
 
   console.log(`[3/4] Publishing ${kind}…`);
   let fbPostId: string;

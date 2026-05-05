@@ -123,42 +123,106 @@ async function fetchShopeeMediaViaHtml(productUrl) {
   return { title, image_urls: [...images], video_url };
 }
 
+// Open the product URL in a background tab, wait for SPA to render, scrape
+// images + video from DOM, close tab. Bypasses anti-bot because this runs
+// as a real page in user's browser.
+async function fetchShopeeMediaViaTab(productUrl) {
+  let tab;
+  try {
+    tab = await chrome.tabs.create({ url: productUrl, active: false });
+  } catch (e) {
+    throw new Error('tabs.create: ' + e.message);
+  }
+
+  const waitForComplete = () =>
+    new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        chrome.tabs.onUpdated.removeListener(listener);
+        reject(new Error('tab load timeout (15s)'));
+      }, 15000);
+      const listener = (id, info) => {
+        if (id === tab.id && info.status === 'complete') {
+          chrome.tabs.onUpdated.removeListener(listener);
+          clearTimeout(timeout);
+          resolve();
+        }
+      };
+      chrome.tabs.onUpdated.addListener(listener);
+    });
+
+  try {
+    await waitForComplete();
+    // Wait for SPA to render images + video. Shopee usually finishes ~3s.
+    await new Promise((r) => setTimeout(r, 4000));
+
+    const [exec] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: () => {
+        const imgs = new Set();
+        for (const img of document.images) {
+          const src = img.src || '';
+          if (!/susercontent\.com|shopee\.vn/i.test(src)) continue;
+          if ((img.naturalWidth || 0) < 200) continue;
+          imgs.add(src);
+        }
+        const videos = new Set();
+        for (const v of document.querySelectorAll('video[src], video source[src]')) {
+          const src = v.src || v.getAttribute('src') || '';
+          if (src && !src.startsWith('blob:')) videos.add(src);
+        }
+        const titleEl = document.querySelector('h1, [class*="product-title" i]');
+        const title = (titleEl?.innerText || document.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
+        return { images: [...imgs], videos: [...videos], title };
+      },
+    });
+
+    const r = exec?.result || { images: [], videos: [], title: '' };
+    return { ...r };
+  } finally {
+    try { await chrome.tabs.remove(tab.id); } catch {}
+  }
+}
+
 async function fetchShopeeMedia(productUrl) {
   const parsed = parseProductUrl(productUrl);
   if (!parsed) return { error: 'cannot parse productUrl' };
+  const canonical = `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`;
 
-  // Try API first (richest data)
-  let apiErr = '';
+  // Try API (richest data, but Shopee usually 403s extension)
+  let errs = [];
   try {
     const m = await fetchShopeeMediaViaApi(parsed);
     if (m.image_urls.length > 0) {
-      return {
-        product_url: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
-        shopid: parsed.shopid,
-        itemid: parsed.itemid,
-        ...m,
-      };
+      return { product_url: canonical, shopid: parsed.shopid, itemid: parsed.itemid, ...m, source: 'api' };
     }
-  } catch (e) {
-    apiErr = String(e).slice(0, 100);
-  }
+  } catch (e) { errs.push('api: ' + String(e).slice(0, 60)); }
 
-  // Fallback: scrape HTML
+  // Try HTML scrape (often empty for SPA)
   try {
     const m = await fetchShopeeMediaViaHtml(productUrl);
     if (m.image_urls.length > 0) {
+      return { product_url: canonical, shopid: parsed.shopid, itemid: parsed.itemid, ...m, source: 'html' };
+    }
+  } catch (e) { errs.push('html: ' + String(e).slice(0, 60)); }
+
+  // Last resort: open hidden tab, scrape rendered DOM
+  try {
+    const m = await fetchShopeeMediaViaTab(canonical);
+    if (m.images.length > 0 || m.videos.length > 0) {
       return {
-        product_url: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
+        product_url: canonical,
         shopid: parsed.shopid,
         itemid: parsed.itemid,
-        ...m,
-        source: 'html-fallback',
+        title: m.title || '',
+        image_urls: m.images,
+        video_url: m.videos[0] || null,
+        source: 'hidden-tab',
       };
     }
-    return { error: `api: ${apiErr || 'no data'} | html: 0 images`, parsed };
-  } catch (e) {
-    return { error: `api: ${apiErr || 'failed'} | html: ${String(e).slice(0, 100)}`, parsed };
-  }
+    errs.push('tab: 0 media');
+  } catch (e) { errs.push('tab: ' + String(e).slice(0, 60)); }
+
+  return { error: errs.join(' | '), parsed };
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
