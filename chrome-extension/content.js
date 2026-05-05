@@ -25,8 +25,12 @@
     'sao chép link',
     'copy link',
     'nhận link',
+    'tạo đường dẫn',
     'sao chép',
     'copy',
+    'generate',
+    'link',
+    'tạo',
   ];
 
   const SHOPEE_LINK_RE = /https?:\/\/(s\.shopee\.vn|shope\.ee)\/[A-Za-z0-9_-]+/i;
@@ -91,8 +95,11 @@
     const candidates = card.querySelectorAll('button, a[role="button"], div[role="button"], a, [class*="btn"], [class*="Button"]');
     for (const btn of candidates) {
       const text = visibleText(btn, 50).toLowerCase();
-      if (!text || text.length > 50) continue;
-      if (GET_LINK_KEYWORDS.some((k) => text.includes(k))) {
+      const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
+      const title = (btn.getAttribute('title') || '').toLowerCase();
+      const haystack = `${text} ${aria} ${title}`;
+      if (!haystack.trim()) continue;
+      if (GET_LINK_KEYWORDS.some((k) => haystack.includes(k))) {
         return btn;
       }
     }
@@ -190,7 +197,8 @@
 
   // ---------- core save ----------
 
-  async function autoSaveCard(card, btn) {
+  async function autoSaveCard(card, btn, opts = {}) {
+    const { armedTimeoutMs = 30_000 } = opts;
     if (btn) {
       btn.disabled = true;
       btn.textContent = '…';
@@ -206,35 +214,49 @@
       };
       savedTitle = data.title;
 
-      // Step 1: try clipboard first (in case user already clicked Get Link manually)
+      // Step 1: clipboard (user may have already copied link manually)
       affUrl = await readClipboardShopeeUrl();
 
-      // Step 2: programmatically click Shopee's Get Link button on the card
+      // Step 2: scan current DOM (modal might already be open with the link)
+      if (!affUrl) affUrl = scanDomForShopeeUrl();
+
+      // Step 3: try to programmatically click Shopee's Get Link button on the card
       if (!affUrl) {
         const getLinkBtn = findGetLinkButton(card);
         if (getLinkBtn) {
           getLinkBtn.click();
-          // Wait briefly for modal/inline-link to render, then poll
           try {
             affUrl = await waitForShopeeUrl(5000);
           } catch {
-            // Try clicking a "Copy" button inside any modal that appeared, then re-check
             tryClickInModal(['copy', 'sao chép']);
             await new Promise((r) => setTimeout(r, 500));
             affUrl = scanDomForShopeeUrl() || (await readClipboardShopeeUrl());
           }
-          // Try to close any modal Shopee opened so the page stays clean for batch mode
           tryCloseModal();
         }
       }
 
-      // Step 3: still nothing → prompt user
+      // Step 4: hybrid "armed" mode — if auto-click couldn't find/click button,
+      // tell user to click "Tạo link" themselves. Watch DOM for up to N seconds.
       if (!affUrl) {
-        affUrl = prompt('Auto-detect failed. Paste the affiliate link manually:', '');
-        if (!affUrl) {
-          if (btn) { btn.disabled = false; btn.textContent = '💾 CV'; }
-          return { ok: false, skipped: true };
+        if (btn) btn.textContent = '⏳ click Tạo link…';
+        showToast(
+          'Click "Tạo link" / "Get Link" on Shopee — I\'ll catch the URL automatically (' + Math.round(armedTimeoutMs / 1000) + 's)',
+          'ok',
+          armedTimeoutMs,
+        );
+        try {
+          affUrl = await waitForShopeeUrl(armedTimeoutMs);
+        } catch {
+          // timeout
         }
+        tryCloseModal();
+      }
+
+      // Step 5: still nothing → bail
+      if (!affUrl) {
+        if (btn) { btn.disabled = false; btn.textContent = '💾 CV'; }
+        return { ok: false, skipped: true, error: 'No affiliate URL detected — try clicking Tạo link first then 💾 CV again' };
       }
       data.affiliate_url = affUrl.trim();
 

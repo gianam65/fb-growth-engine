@@ -6,37 +6,38 @@
 <style>
   :root { color-scheme: light dark; }
   * { box-sizing: border-box; }
-  body { width: 360px; margin: 0; padding: 14px; font-family: system-ui, -apple-system, sans-serif; font-size: 13px; }
-  h1 { font-size: 15px; margin: 0 0 8px; }
+  body { width: 300px; margin: 0; padding: 16px; font-family: system-ui, -apple-system, sans-serif; font-size: 13px; }
+  h1 { font-size: 15px; margin: 0 0 12px; display: flex; align-items: center; justify-content: space-between; }
   .row { margin: 8px 0; }
   label { display: block; font-size: 11px; color: #888; margin-bottom: 3px; }
-  input, textarea { width: 100%; padding: 8px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; font-family: inherit; }
-  textarea { resize: vertical; min-height: 50px; }
-  button { padding: 9px 14px; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; }
-  .save { width: 100%; background: #3ae07f; color: #000; padding: 11px; }
-  .save:disabled { opacity: 0.5; cursor: wait; }
-  .gear { background: transparent; color: #888; padding: 4px 8px; font-size: 11px; }
-  .preview { width: 64px; height: 64px; object-fit: cover; border-radius: 6px; background: #eee; vertical-align: middle; margin-right: 8px; }
-  .head { display: flex; align-items: center; justify-content: space-between; }
-  .msg { padding: 8px 10px; border-radius: 6px; margin-top: 8px; font-size: 12px; word-break: break-all; }
+  input { width: 100%; padding: 9px; border: 1px solid #ccc; border-radius: 6px; font-size: 13px; font-family: inherit; }
+  button { padding: 11px 14px; border: 0; border-radius: 6px; font-weight: 600; cursor: pointer; font-size: 13px; width: 100%; }
+  .primary { background: #3ae07f; color: #000; }
+  .nav { background: #f0f0f0; color: #222; margin-top: 8px; text-align: left; padding: 12px 14px; }
+  .nav:hover { background: #e6e6e6; }
+  .gear { background: transparent; color: #888; padding: 4px 8px; font-size: 14px; width: auto; cursor: pointer; }
+  .hint { color: #888; font-size: 11px; margin-top: 8px; line-height: 1.5; }
+  .msg { padding: 8px 10px; border-radius: 6px; margin-top: 8px; font-size: 12px; }
   .ok { background: #e6f9ed; color: #1a7f3a; }
   .err { background: #fdeaea; color: #b32d2d; }
-  .hint { color: #888; font-size: 11px; margin-top: 4px; line-height: 1.4; }
-  .hr { height: 1px; background: #eee; margin: 12px 0; border: 0; }
   @media (prefers-color-scheme: dark) {
     body { background:#1a1a1a; color:#e0e0e0; }
-    input, textarea { background:#2a2a2a; color:#fff; border-color:#3a3a3a; }
+    input { background:#2a2a2a; color:#fff; border-color:#3a3a3a; }
+    .nav { background:#2a2a2a; color:#e0e0e0; }
+    .nav:hover { background:#333; }
+    .gear { color:#aaa; }
     .ok { background:#143421; color:#7be88a; }
     .err { background:#3a1f1f; color:#ff8a8a; }
-    .preview { background:#333; }
-    .gear { color:#aaa; }
   }
 </style>
 </head>
 <body>
 
 <div id="settings" hidden>
-  <h1>Setup</h1>
+  <h1>
+    Setup
+    <button id="cancelSettings" class="gear" title="Cancel" hidden>✕</button>
+  </h1>
   <div class="row">
     <label>Worker URL</label>
     <input id="workerUrl" placeholder="https://fb-growth-engine.namgia-dev.workers.dev">
@@ -46,47 +47,25 @@
     <input id="adminToken" type="password" placeholder="ADMIN_TOKEN">
   </div>
   <div class="row">
-    <button id="saveSettings" class="save">Save settings</button>
+    <button id="saveSettings" class="primary">Save settings</button>
   </div>
-  <div class="hint">After saving, click the extension icon again to add products.</div>
+  <div id="settingsMsg" class="msg" hidden></div>
+  <div class="hint">
+    Saved to <code>chrome.storage.sync</code> — persists across reloads.
+    Get button auto-clicks on Shopee work after this is configured.
+  </div>
 </div>
 
-<div id="add" hidden>
-  <div class="head">
-    <h1>Save product</h1>
+<div id="main" hidden>
+  <h1>
+    Cozy Vibe
     <button id="openSettings" class="gear" title="Settings">⚙</button>
-  </div>
-  <div class="row" id="previewWrap" hidden>
-    <img id="previewImg" class="preview" alt="">
-  </div>
-  <div class="row">
-    <label>Affiliate link <small style="color:#b32d2d">*</small></label>
-    <input id="affiliateUrl" placeholder="https://s.shopee.vn/XYZ">
-    <div class="hint">Click "Get link" / "Copy link" on Shopee first, then paste here.</div>
-  </div>
-  <div class="row">
-    <label>Title</label>
-    <input id="title" placeholder="auto-detected">
-  </div>
-  <div class="row">
-    <label>Image URL</label>
-    <input id="imageUrl" placeholder="auto-detected">
-  </div>
-  <div class="row">
-    <label>Price <small style="color:#888">(optional)</small></label>
-    <input id="price" placeholder="">
-  </div>
-  <div class="row">
-    <button id="save" class="save">💾 Save to Cozy Vibe pool</button>
-  </div>
-  <div id="msg" class="msg" hidden></div>
-  <div class="hr"></div>
-  <div class="row" style="display:flex; gap:8px;">
-    <button id="viewAffiliate" class="gear" style="flex:1; background:#444; color:#fff; padding:8px; border-radius:6px;">📋 Affiliate pool</button>
-    <button id="viewPhotos" class="gear" style="flex:1; background:#444; color:#fff; padding:8px; border-radius:6px;">🖼 Photo pool</button>
-  </div>
+  </h1>
+  <button id="viewAffiliate" class="nav">📋 Affiliate pool</button>
+  <button id="viewPhotos" class="nav">🖼 Photo pool</button>
   <div class="hint">
-    Tip: copy the affiliate URL on Shopee → open this popup → it auto-pastes from clipboard if allowed.
+    Save products by clicking the <b>💾 CV</b> button on each card while
+    browsing <code>affiliate.shopee.vn</code>.
   </div>
 </div>
 
