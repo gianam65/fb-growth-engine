@@ -4,9 +4,12 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
+const CV_VERSION = '1.4.3';
+
 (() => {
   if (window.__cvInjected) return;
   window.__cvInjected = true;
+  console.log('[CV] content.js v' + CV_VERSION + ' loaded');
 
   const CARD_SELECTORS = [
     'div[class*="product-card"]',
@@ -88,20 +91,32 @@
     return true;
   }
 
+  function isOurButton(el) {
+    if (!el) return false;
+    if (el.classList && el.classList.contains('cv-save-btn')) return true;
+    const cls = (el.className && typeof el.className === 'string') ? el.className : (el.getAttribute('class') || '');
+    if (cls && cls.includes('cv-save-btn')) return true;
+    if (el.dataset && el.dataset.cvBtn) return true;
+    return false;
+  }
+
   function findGetLinkButton(card) {
     const candidates = card.querySelectorAll('button, a[role="button"], div[role="button"], a, [class*="btn"], [class*="Button"]');
+    const debugCands = [];
     for (const btn of candidates) {
       // CRITICAL: skip our own injected button (its title contains "link" which would loop)
-      if (btn.classList.contains('cv-save-btn')) continue;
+      if (isOurButton(btn)) continue;
       const text = visibleText(btn, 50).toLowerCase();
       const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
       const title = (btn.getAttribute('title') || '').toLowerCase();
       const haystack = `${text} ${aria} ${title}`;
+      debugCands.push({ text: text.slice(0, 40), cls: (btn.className || '').slice(0, 60) });
       if (!haystack.trim()) continue;
       if (GET_LINK_KEYWORDS.some((k) => haystack.includes(k))) {
         return btn;
       }
     }
+    console.log('[CV] findGetLinkButton — candidates checked (after filtering ours):', debugCands);
     return null;
   }
 
@@ -166,11 +181,10 @@
   ];
 
   function tryClickInModal(textKeywords = COPY_KEYWORDS) {
-    // Find any visible button matching keywords (Copy/Sao chép inside Shopee's modal)
     const allBtns = document.querySelectorAll('button, a[role="button"], div[role="button"], [class*="btn"], [class*="Button"]');
     for (const btn of allBtns) {
-      if (btn.classList.contains('cv-save-btn')) continue; // skip our own button
-      if (btn.offsetParent === null) continue; // hidden
+      if (isOurButton(btn)) continue;
+      if (btn.offsetParent === null) continue;
       const text = visibleText(btn, 30).toLowerCase();
       const aria = (btn.getAttribute('aria-label') || '').toLowerCase();
       const haystack = `${text} ${aria}`;
