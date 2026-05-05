@@ -4,7 +4,7 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
-const CV_VERSION = '1.6.1';
+const CV_VERSION = '1.6.2';
 
 (() => {
   if (window.__cvInjected) return;
@@ -230,7 +230,8 @@ const CV_VERSION = '1.6.1';
   async function readClipboardShopeeUrl() {
     try {
       const txt = await navigator.clipboard.readText();
-      if (SHOPEE_LINK_RE.test(txt.trim())) return txt.trim();
+      const m = (txt || '').match(SHOPEE_LINK_RE);
+      if (m) return m[0]; // extract just the URL, not the full clipboard text
     } catch {}
     return null;
   }
