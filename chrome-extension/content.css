@@ -1,0 +1,47 @@
+.cv-save-btn {
+  position: absolute !important;
+  top: 8px !important;
+  right: 8px !important;
+  z-index: 99999 !important;
+  background: #3ae07f !important;
+  color: #000 !important;
+  border: 0 !important;
+  border-radius: 6px !important;
+  padding: 6px 10px !important;
+  font: 600 12px/1.2 system-ui, -apple-system, sans-serif !important;
+  cursor: pointer !important;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2) !important;
+  transition: transform 0.15s ease !important;
+  pointer-events: auto !important;
+}
+.cv-save-btn:hover {
+  transform: scale(1.05) !important;
+}
+.cv-save-btn.cv-saved {
+  background: #888 !important;
+  cursor: default !important;
+}
+.cv-save-btn.cv-saved:hover {
+  transform: none !important;
+}
+.cv-toast {
+  position: fixed !important;
+  top: 20px !important;
+  right: 20px !important;
+  z-index: 999999 !important;
+  background: #1a1a1a !important;
+  color: #fff !important;
+  padding: 12px 16px !important;
+  border-radius: 8px !important;
+  font: 500 13px/1.4 system-ui, -apple-system, sans-serif !important;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3) !important;
+  max-width: 320px !important;
+  word-break: break-word !important;
+  animation: cv-toast-in 0.2s ease !important;
+}
+.cv-toast.cv-ok { background: #1a7f3a !important; }
+.cv-toast.cv-err { background: #b32d2d !important; }
+@keyframes cv-toast-in {
+  from { transform: translateX(40px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}

@@ -1,12 +1,23 @@
 {
   "manifest_version": 3,
   "name": "Cozy Vibe Affiliate Pool",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Save Shopee affiliate products to the Cozy Vibe pool with one click.",
   "permissions": ["storage", "activeTab", "scripting", "clipboardRead"],
   "host_permissions": [
     "https://affiliate.shopee.vn/*",
     "https://shopee.vn/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://affiliate.shopee.vn/*"],
+      "js": ["content.js"],
+      "css": ["content.css"],
+      "run_at": "document_idle"
+    }
   ],
   "action": {
     "default_popup": "popup.html",

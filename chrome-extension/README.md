@@ -18,17 +18,24 @@ you browse `affiliate.shopee.vn`.
 3. Admin token: paste your `ADMIN_TOKEN`
 4. Save
 
-## Daily workflow
+## Daily workflow (recommended — per-card button)
 
 1. Browse `https://affiliate.shopee.vn/offer/product_offer` (or `/brand_offer`)
-2. Click a product card → Shopee opens detail / "Get Link" modal
-3. Copy the affiliate short URL (e.g. `https://s.shopee.vn/XYZ`)
-4. Click the extension icon
-5. The popup auto-fills:
-   - Title (from `<h1>` or `<title>`)
-   - Image URL (from `og:image` or biggest visible image)
-   - Affiliate link (from clipboard if it looks like a Shopee link)
-6. Click **💾 Save to Cozy Vibe pool**
+2. On each product card you'll see a small green **💾 CV** button (top-right).
+3. Click "Get Link" / "Tạo link" on Shopee → copy the short URL
+4. Click the **💾 CV** button on that card → reads clipboard for affiliate URL
+   automatically, saves with the card's title + image
+5. Toast confirms ✓ saved (id=N)
+
+If `💾 CV` doesn't appear on a card (Shopee changed DOM), use the floating
+**💾 CV (page)** button bottom-right or open the popup for manual entry.
+
+## Fallback: popup (no per-card button)
+
+1. Click extension icon
+2. Popup auto-fills title / image from active tab
+3. Paste affiliate link (or it auto-pastes from clipboard)
+4. Click **💾 Save to Cozy Vibe pool**
 
 ## Verify
 
