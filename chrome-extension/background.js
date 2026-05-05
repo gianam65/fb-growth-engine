@@ -10,7 +10,9 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         return;
       }
       try {
-        const res = await fetch(cfg.workerUrl.replace(/\/+$/, '') + '/admin/affiliate/url', {
+        const url = cfg.workerUrl.replace(/\/+$/, '') + '/admin/affiliate/url';
+        console.log('[CV-bg] POST', url, msg.data);
+        const res = await fetch(url, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -21,12 +23,14 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         const text = await res.text();
         let data;
         try { data = JSON.parse(text); } catch { data = { error: text.slice(0, 200) }; }
+        console.log('[CV-bg] response', res.status, data);
         if (!res.ok) {
           sendResponse({ ok: false, error: data.error || res.status });
           return;
         }
         sendResponse({ ok: true, ...data });
       } catch (err) {
+        console.error('[CV-bg] fetch error:', err);
         sendResponse({ ok: false, error: String(err).slice(0, 200) });
       }
     })();

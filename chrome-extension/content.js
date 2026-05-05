@@ -226,32 +226,50 @@
         source_url: window.location.href,
       };
       savedTitle = data.title;
+      console.log('[CV] autoSaveCard start →', { title: data.title?.slice(0, 60), image: data.image_url?.slice(0, 80) });
 
       // Step 1: clipboard (user may have already copied link manually)
       affUrl = await readClipboardShopeeUrl();
+      if (affUrl) console.log('[CV] step 1 — clipboard had URL:', affUrl);
 
       // Step 2: scan current DOM (modal might already be open with the link)
-      if (!affUrl) affUrl = scanDomForShopeeUrl();
+      if (!affUrl) {
+        affUrl = scanDomForShopeeUrl();
+        if (affUrl) console.log('[CV] step 2 — DOM scan found URL:', affUrl);
+      }
 
       // Step 3: try to programmatically click Shopee's Get Link button on the card
       if (!affUrl) {
         const getLinkBtn = findGetLinkButton(card);
-        if (getLinkBtn) {
+        if (!getLinkBtn) {
+          console.warn('[CV] step 3 — no Get Link button found on card. Buttons inside card:',
+            Array.from(card.querySelectorAll('button, a[role="button"], div[role="button"], a, [class*="btn"], [class*="Button"]'))
+              .map((b) => ({ text: visibleText(b, 50), aria: b.getAttribute('aria-label'), cls: b.className?.slice(0, 80) })),
+          );
+        } else {
+          console.log('[CV] step 3 — clicking Get Link button:', visibleText(getLinkBtn, 30), getLinkBtn);
+          // Use full event sequence in case .click() alone is intercepted
+          getLinkBtn.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+          getLinkBtn.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
           getLinkBtn.click();
+
           // Brief pause for modal to render, then auto-click Sao chép button
-          await new Promise((r) => setTimeout(r, 400));
+          await new Promise((r) => setTimeout(r, 600));
           const copied = tryClickInModal();
+          console.log('[CV] step 3 — auto-clicked Sao chép?', copied);
           if (copied) {
-            // Sao chép should put URL on clipboard. Brief wait then read.
-            await new Promise((r) => setTimeout(r, 250));
+            await new Promise((r) => setTimeout(r, 350));
             affUrl = (await readClipboardShopeeUrl()) || scanDomForShopeeUrl();
+            if (affUrl) console.log('[CV] step 3 — got URL after Sao chép:', affUrl);
           }
-          // If still no URL, wait longer in case of network delay
           if (!affUrl) {
+            console.log('[CV] step 3 — waiting up to 5s for URL in DOM…');
             try {
               affUrl = await waitForShopeeUrl(5000);
+              console.log('[CV] step 3 — DOM observer caught URL:', affUrl);
             } catch {
               affUrl = (await readClipboardShopeeUrl()) || null;
+              if (affUrl) console.log('[CV] step 3 — clipboard finally had URL:', affUrl);
             }
           }
           tryCloseModal();
@@ -277,10 +295,12 @@
 
       // Step 5: still nothing → bail
       if (!affUrl) {
+        console.warn('[CV] all steps failed — no affiliate URL detected');
         if (btn) { btn.disabled = false; btn.textContent = '💾 CV'; }
-        return { ok: false, skipped: true, error: 'No affiliate URL detected — try clicking Tạo link first then 💾 CV again' };
+        return { ok: false, skipped: true, error: 'No affiliate URL detected — try clicking Lấy link first then 💾 CV again' };
       }
       data.affiliate_url = affUrl.trim();
+      console.log('[CV] sending to Worker:', data);
 
       // Step 4: send to background → Worker
       const res = await chrome.runtime.sendMessage({ type: 'save_affiliate', data });
