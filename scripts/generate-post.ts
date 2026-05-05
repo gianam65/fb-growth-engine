@@ -28,10 +28,11 @@ const IMG_HEIGHT = Number(process.env.IMG_HEIGHT || 1800);
 const STYLE_PRESETS: Record<string, { suffix: string; vibe_hint: string }> = {
   'asian-cozy': {
     // Lighting tokens first — FLUX prioritizes early tokens, so warm tone leads.
+    // Density tokens at end — push FLUX away from sparse showroom-look outputs.
     suffix:
-      'warm amber tungsten lighting, golden hour sunset glow streaming through a large window, honey-colored ambient light, warm orange and yellow color grading, soft glowing rice paper lantern. Modern asian apartment cozy aesthetic, xiaohongshu home decor style, douyin cozy room interior, warm beige walls, light oak wood floor, white minimalist furniture, rattan chair, lots of indoor plants, monstera fiddle leaf fig snake plant, hanging pothos vines, biophilic lush greenery, lived-in cozy vibe. Ultra sharp focus, high detail, 8k photorealistic, professional interior photography, Sony A7IV 50mm f/1.8, magazine cover quality. No people, no text, no logos.',
+      'warm amber tungsten lighting from multiple soft sources, white rice paper pendant lantern glowing softly, additional small rattan pendant lamp, desk lamp halo, candle glow, honey-amber color grading, cozy intimate evening ambience, soft yellow lamp halos, layered warm light pools. Small modern asian apartment studio, xiaohongshu aesthetic, douyin cozy room interior, warm beige and cream walls, light honey oak hardwood floor, white minimalist platform bed with linen bedding, white desk with dual monitors and laptop, rattan cane Cesca chair, backlit LED floating shelves stacked with books and decor objects, gallery wall of art prints and indie music posters, framed minimalist line art, monstera and fiddle leaf fig and hanging pothos vines spilling from shelves, vintage radio, ceramic mug, stack of colorful books, jute rug layered with cream shag rug, full-height french doors or floor-to-ceiling window opening to balcony with city skyline at dusk, sheer beige curtains, exposed white industrial pipes on ceiling. Highly curated lived-in space, every surface decorated with personal items, eclectic layered visual richness, small studio apartment maximalist cozy, not minimalist not sparse, dense cozy clutter aesthetic. Ultra sharp focus, high detail, 8k photorealistic, professional interior photography, Sony A7IV 50mm f/1.8, magazine cover quality. No people, no text, no logos.',
     vibe_hint:
-      'modern Asian apartment with warm tungsten glow, rice paper lamp, lots of plants (monstera, fiddle leaf), wood floor, warm beige walls, large window, golden hour mood',
+      'small modern Asian apartment studio at golden hour: warm tungsten lamps (rice paper pendant + desk lamp + candles), white platform bed, rattan cane chair, backlit floating shelves with books/plants, gallery wall, monstera + fiddle leaf, balcony with city view, honey oak floor, layered rugs, highly curated decor — NOT minimalist, every surface has personal items',
   },
   japandi: {
     suffix:
@@ -77,24 +78,30 @@ const SPEC_SCHEMA = {
 };
 
 const SPEC_PROMPT = `You curate one daily photo post for a Vietnamese home decor Facebook page named "Cozy Vibe".
-The aesthetic is FIXED to: ${STYLE.vibe_hint}.
-The output is a 5-photo carousel showing different angles of the same cozy space — like a Xiaohongshu/Douyin home tour.
-You do NOT need to mention aesthetic/style/film-stock/lighting words — those are appended automatically. Focus ONLY on what objects appear and where the camera is.
+The space depicted is: ${STYLE.vibe_hint}.
 
-Output JSON with these fields:
+The output is a 5-photo carousel from the SAME small studio apartment, different angles. Think Xiaohongshu/Douyin home tour where every photo reveals a new layer of the same lived-in space.
 
-- theme: short English slug for today (e.g., "morning-plant-corner", "evening-desk-glow", "rainy-window-monstera"). Be specific.
+CRITICAL: the room is HIGHLY DECORATED, NOT a sterile showroom. Each scene description MUST mention 5+ specific decor items in the frame: books, plants, art prints, candles, lamps, vinyl/radio, mug, posters, photo frames, knick-knacks, layered fabrics, etc. Sparse minimalism is WRONG.
 
-- scene_descriptions: array of EXACTLY ${NUM_IMAGES} distinct one-line scene descriptions in English. Each line MUST:
-  * be a different camera angle (wide room shot, close-up of a corner detail, over-the-shoulder, top-down flatlay, low-angle floor view)
-  * name 3-6 specific objects in the frame (e.g., "monstera leaves catching window light, white ceramic mug on side table, linen curtain swaying")
-  * stay coherent with the day's theme — same room/space, different angles
-  * AVOID style words like "cozy", "cinematic", "film grain", "warm" — those auto-append later
-  * AVOID people, faces, hands; silhouettes far away OK only if needed
+Do NOT mention aesthetic/style/film-stock/lighting/camera-quality words — those are appended automatically. Focus ONLY on objects + spatial composition.
 
-- caption: 1-3 short sentences in casual Vietnamese, soothing/evocative, not salesy. May start with a soft hook or rhetorical question. No emoji at the very start; sparingly inside is fine.
+Output JSON:
 
-- hashtags: single line of 8-12 hashtags, mix Vietnamese + English (e.g., #cozyvibe #nhaxinh #decor #aestheticroom #xiaohongshu #douyinstyle #lofi #plantparent #goccay #trangtri).
+- theme: short English slug for today (e.g., "evening-desk-warm-glow", "rainy-balcony-view-night", "morning-shelves-with-vines"). Specific to time-of-day and focus area.
+
+- scene_descriptions: EXACTLY ${NUM_IMAGES} one-line descriptions in English, following this rough rotation:
+  1. WIDE OVERVIEW: high or wide angle showing balcony french doors / floor-to-ceiling window, bed or main couch, desk, multiple lamps, the whole room
+  2. WORKSPACE FOCUS: medium shot of desk area — monitors, laptop, rattan cane Cesca chair, plants, lamp halo, books stacked, framed art behind
+  3. SHELVES & PERSONAL DETAILS: close-up of backlit floating shelves OR gallery wall — books, art prints, candle, small plant, photo frames, vinyl records, ceramic objects
+  4. PLANT-WINDOW MOMENT: monstera/fiddle leaf/hanging pothos against the window, balcony or city visible behind, sheer curtain, jute rug edge
+  5. LOW-ANGLE OR FLATLAY: floor-level or top-down — layered rug, bottom of furniture, small coffee table with mug + book + candle, slippers, throw blanket
+
+  Each line MUST list 5+ specific items in frame. Avoid style/lighting words.
+
+- caption: 2-3 sentences in casual Vietnamese, evocative not salesy. Open with a small hook (a question, a moment, a feeling). 1-2 emojis sparingly inside is fine. Examples of tone: "Trời mưa, mở đèn vàng lên là thấy ấm rồi.", "Đi làm về, mở cửa thấy ánh đèn quen — chill thôi.", "Ai mà chả từng mơ một góc như này 🌿".
+
+- hashtags: 8-12 hashtags single line, mix Vietnamese + English: #cozyvibe #nhaxinh #goccay #decor #trangtrinoithat #aestheticroom #xiaohongshu #douyinstyle #plantparent #studioapartment #cozyroom #lofi.
 
 Return ONLY the JSON, no markdown fence.`;
 
