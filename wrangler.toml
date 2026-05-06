@@ -29,11 +29,23 @@ FB_GRAPH_VERSION = "v21.0"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 LOG_LEVEL = "info"
 
-# Cloudflare Workers cron — way more reliable than GH Actions cron.
-# Fires every hour at minute 5. Worker checks D1 last-post times; if any
-# pipeline is overdue, dispatches the GH workflow via API.
+# Cloudflare Workers cron — primary scheduler (CF cron is far more reliable
+# than GH Actions cron). Worker dispatches the GH workflow via API at the
+# scheduled time. Hourly tick is the watchdog (catches any rare miss).
+#
+#   00:00 UTC = 07:00 ICT  → Pinterest curate-post
+#   04:00 UTC = 11:00 ICT  → Affiliate post (AM)
+#   07:00 UTC = 14:00 ICT  → Affiliate post (test slot — remove later)
+#   12:00 UTC = 19:00 ICT  → Affiliate post (PM)
+#   xx:05      → hourly watchdog (overdue check + retry)
 [triggers]
-crons = ["5 * * * *"]
+crons = [
+  "0 0 * * *",
+  "0 4 * * *",
+  "0 7 * * *",
+  "0 12 * * *",
+  "5 * * * *"
+]
 
 # Secrets are set via: wrangler secret put <NAME>
 # Required secrets:

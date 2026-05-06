@@ -1,9 +1,8 @@
 name: Curate FB post (Pexels)
 
 on:
-  schedule:
-    # 00:00 UTC = 07:00 Asia/Ho_Chi_Minh
-    - cron: '0 0 * * *'
+  # Scheduled fires migrated to Cloudflare Worker cron (wrangler.toml triggers.crons)
+  # because GH Actions cron has 5-30+ min delays. Worker dispatches via API.
   workflow_dispatch:
     inputs:
       preview:

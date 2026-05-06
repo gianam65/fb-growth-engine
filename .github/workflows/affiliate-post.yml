@@ -1,13 +1,9 @@
 name: Affiliate post (2/day)
 
 on:
-  schedule:
-    # 04:00 UTC = 11:00 ICT (sáng) — peak browsing
-    - cron: '0 4 * * *'
-    # 07:00 UTC = 14:00 ICT (test slot) — quiet afternoon
-    - cron: '0 7 * * *'
-    # 12:00 UTC = 19:00 ICT (tối) — peak browsing
-    - cron: '0 12 * * *'
+  # Scheduled fires migrated to Cloudflare Worker cron (wrangler.toml triggers.crons)
+  # because GH Actions cron has 5-30+ min delays / silent skips. Worker
+  # dispatches this workflow via API at the exact scheduled time.
   workflow_dispatch:
 
 concurrency:

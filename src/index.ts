@@ -6,7 +6,7 @@ import { handleAdminPinterest } from '@/admin/pinterest';
 import { handleAdminAdd } from '@/admin/add';
 import { handleAdminAffiliate } from '@/admin/affiliate';
 import { handleTelegramWebhook } from '@/telegram/webhook';
-import { runWatchdog } from '@/watchdog';
+import { handleScheduled } from '@/watchdog';
 
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
@@ -33,8 +33,8 @@ export default {
     }
   },
 
-  async scheduled(_event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
-    // Cron defined in wrangler.toml triggers.crons. Currently every hour.
-    ctx.waitUntil(runWatchdog(env));
+  async scheduled(event: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Multiple crons in wrangler.toml. Handler routes by event.cron string.
+    ctx.waitUntil(handleScheduled(env, event.cron));
   },
 } satisfies ExportedHandler<Env, FbEvent>;
