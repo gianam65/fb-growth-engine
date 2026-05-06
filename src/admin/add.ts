@@ -107,7 +107,7 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
       </div>
 
       <div class="hint-box" style="margin-top:14px">
-        <span style="color:#1ad482">ⓘ</span> Pin 2-3 ảnh CÙNG 1 phòng → paste cùng lần để thành 1 set. Cron sẽ pick từng set → mỗi post là 1 carousel coherent.
+        <b>1 set = 1 carousel post.</b> Paste 2-3 ảnh CÙNG 1 phòng cùng lần để chúng vào chung 1 set, FB sẽ đăng 1 post nhiều ảnh.
       </div>
 
       <button id="submit" class="btn-primary" style="margin-top:14px;width:100%">⤴ Add to pool</button>
@@ -135,31 +135,31 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
     @media (max-width:980px) { .grid-2 { grid-template-columns:1fr; } }
     .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
     .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:0 2px; }
-    .empty-state { text-align:center; padding:40px 20px; color:#666; font-size:13.5px; background:#0f1115; border:1px dashed #1f2127; border-radius:12px; }
+    .empty-state { text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13.5px; background:var(--surface); border:1px dashed var(--border-strong); border-radius:12px; }
 
-    .asset-card { display:flex; gap:14px; background:#0f1115; border:1px solid #1a1c20; border-radius:12px; padding:14px; margin-bottom:10px; transition:border-color 0.12s; }
-    .asset-card:hover { border-color:#2a2c32; }
-    .asset-thumb { width:100px; height:100px; flex-shrink:0; border-radius:10px; overflow:hidden; background:#0a0b0e; }
+    .asset-card { display:flex; gap:14px; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:10px; transition:border-color 0.12s, box-shadow 0.12s; }
+    .asset-card:hover { border-color:var(--border-strong); box-shadow:0 2px 8px rgba(42,31,24,0.05); }
+    .asset-thumb { width:100px; height:100px; flex-shrink:0; border-radius:10px; overflow:hidden; background:var(--surface-2); }
     .asset-thumb img { width:100%; height:100%; object-fit:cover; }
     .asset-info { flex:1; min-width:0; }
-    .asset-row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }
-    .asset-date { font-size:11px; color:#666; }
-    .asset-title { font-size:15px; font-weight:600; margin-bottom:6px; line-height:1.3; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
-    .asset-meta { display:flex; gap:10px; align-items:center; font-size:11.5px; margin-bottom:8px; }
-    .src-pill { color:#9eb8ff; }
-    .muted { color:#666; }
+    .asset-row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:8px; }
+    .asset-date { font-size:11px; color:var(--text-muted); }
+    .asset-title { font-size:15px; font-weight:600; margin-bottom:6px; line-height:1.3; color:var(--text); overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
+    .asset-meta { display:flex; gap:10px; align-items:center; font-size:11.5px; margin-bottom:10px; }
+    .src-pill { color:var(--brand); font-weight:500; }
+    .muted { color:var(--text-muted); }
 
     .set-tiles { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
-    .set-tile { position:relative; width:60px; height:60px; border-radius:8px; overflow:hidden; background:#0a0b0e; }
+    .set-tile { position:relative; width:64px; height:64px; border-radius:8px; overflow:hidden; background:var(--surface-2); border:1px solid var(--border); }
     .set-tile img { width:100%; height:100%; object-fit:cover; }
-    .set-tile .tile-del { position:absolute; top:3px; right:3px; width:20px; height:20px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,0.75); color:#ff8a8a; cursor:pointer; font-size:11px; line-height:20px; opacity:0; transition:opacity 0.12s; }
+    .set-tile .tile-del { position:absolute; top:3px; right:3px; width:20px; height:20px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,0.6); color:#fff; cursor:pointer; font-size:11px; line-height:20px; opacity:0; transition:opacity 0.12s; }
     .set-tile:hover .tile-del { opacity:1; }
-    .set-tile .tile-del:hover { background:rgba(255,138,138,0.25); }
+    .set-tile .tile-del:hover { background:#b94a35; }
     .set-tile.deleting { opacity:0.3; }
 
     .result { margin-top:10px; padding:9px 12px; border-radius:8px; font-size:13px; word-break:break-all; line-height:1.5; }
-    .result.ok { background:rgba(30,225,138,0.1); border:1px solid rgba(30,225,138,0.25); color:#1ad482; }
-    .result.err { background:rgba(255,138,138,0.1); border:1px solid rgba(255,138,138,0.25); color:#ff8a8a; }
+    .result.ok { background:var(--leaf-soft); border:1px solid #c5d6a8; color:var(--leaf); }
+    .result.err { background:#fbe4dd; border:1px solid #e8b9aa; color:#b94a35; }
   </style>
   `;
 

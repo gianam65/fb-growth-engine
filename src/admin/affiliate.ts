@@ -81,17 +81,11 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
     })
     .join('');
 
-  // Tabs + filter pills shown inline above the list
   const content = `
   <div class="aff-toolbar">
-    <div class="tabs">
-      <a class="tab" href="/admin/add?key=${encodeURIComponent(key)}">Photos</a>
-      <span class="tab active">Affiliate</span>
-    </div>
     <div class="pills">
-      <span class="pill active"><span class="dot" style="color:#1ad482"></span>UNUSED (${counts.unused ?? 0})</span>
-      <span class="pill"><span class="dot" style="color:#7be88a"></span>APPROVED (${counts.approved ?? 0})</span>
-      <span class="pill"><span class="dot" style="color:#7da9ff"></span>POSTED (${counts.used ?? 0})</span>
+      <span class="pill active"><span class="dot" style="color:#d97706"></span>UNUSED (${counts.unused ?? 0})</span>
+      <span class="pill"><span class="dot" style="color:#4a7c2c"></span>POSTED (${counts.used ?? 0})</span>
     </div>
   </div>
 
@@ -104,20 +98,20 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
   <style>
     .aff-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
     .aff-list { display:flex; flex-direction:column; gap:10px; }
-    .aff-row { display:grid; grid-template-columns:80px 1.6fr 1fr 1fr auto auto; gap:14px; align-items:center; background:#0f1115; border:1px solid #1a1c20; border-radius:12px; padding:12px 14px; transition:border-color 0.12s, opacity 0.2s; }
-    .aff-row:hover { border-color:#2a2c32; }
+    .aff-row { display:grid; grid-template-columns:88px 1.6fr 1fr 1fr auto auto; gap:14px; align-items:center; background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:12px 14px; transition:border-color 0.12s, opacity 0.2s, box-shadow 0.12s; }
+    .aff-row:hover { border-color:var(--border-strong); box-shadow:0 2px 8px rgba(42,31,24,0.05); }
     .aff-row.deleting { opacity:0.25; }
-    .aff-row > img { width:80px; height:80px; object-fit:cover; border-radius:9px; background:#0a0b0e; }
-    .aff-info { min-width:0; display:flex; flex-direction:column; gap:6px; }
-    .aff-title { font-size:14px; font-weight:600; line-height:1.35; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .aff-row > img { width:88px; height:88px; object-fit:cover; border-radius:9px; background:var(--surface-2); }
+    .aff-info { min-width:0; display:flex; flex-direction:column; gap:8px; align-items:flex-start; }
+    .aff-title { font-size:14px; font-weight:600; line-height:1.4; color:var(--text); overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
     .col { min-width:0; }
-    .col-label { font-size:10px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:0.06em; }
-    .col-val { font-size:14px; font-weight:500; margin-top:2px; }
-    .shopee-btn { display:inline-flex; align-items:center; justify-content:center; padding:9px 14px; background:#13151a; border:1px solid #2a2c32; border-radius:9px; color:#9eb8ff; font-size:12.5px; text-decoration:none; transition:background 0.12s, border-color 0.12s; white-space:nowrap; }
-    .shopee-btn:hover { background:#191c22; border-color:#2f4170; color:#bcd0ff; }
-    .aff-del { width:32px; height:32px; padding:0; border:0; background:transparent; color:#666; border-radius:8px; cursor:pointer; font-size:14px; }
-    .aff-del:hover { background:rgba(255,138,138,0.12); color:#ff8a8a; }
-    .empty-state { text-align:center; padding:40px 20px; color:#666; font-size:13.5px; background:#0f1115; border:1px dashed #1f2127; border-radius:12px; }
+    .col-label { font-size:10px; font-weight:700; color:var(--text-muted); text-transform:uppercase; letter-spacing:0.06em; }
+    .col-val { font-size:15px; font-weight:600; margin-top:3px; color:var(--text); }
+    .shopee-btn { display:inline-flex; align-items:center; justify-content:center; padding:9px 16px; background:var(--brand); border:0; border-radius:9px; color:#fff; font-size:12.5px; font-weight:600; text-decoration:none; transition:background 0.12s; white-space:nowrap; }
+    .shopee-btn:hover { background:var(--brand-hover); }
+    .aff-del { width:32px; height:32px; padding:0; border:0; background:transparent; color:var(--text-subtle); border-radius:8px; cursor:pointer; font-size:14px; }
+    .aff-del:hover { background:#fbe4dd; color:#b94a35; }
+    .empty-state { text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13.5px; background:var(--surface); border:1px dashed var(--border-strong); border-radius:12px; }
     @media (max-width: 980px) {
       .aff-row { grid-template-columns:64px 1fr auto; }
       .aff-row .col, .aff-row .shopee-btn { display:none; }
