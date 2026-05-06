@@ -149,7 +149,10 @@ async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption:
   const text = await res.text();
   if (!res.ok) throw new Error(`Photo post ${res.status}: ${text.slice(0, 400)}`);
   const json = JSON.parse(text) as { post_id?: string; id?: string };
-  return json.post_id ?? json.id ?? 'unknown';
+  // Prefer photo `id` (always supports /comments). The page_post_id
+  // (json.post_id) sometimes returns 400 "does not support" when used
+  // directly as comments target.
+  return json.id ?? json.post_id ?? 'unknown';
 }
 
 // ----------- FB comment on own post -----------
