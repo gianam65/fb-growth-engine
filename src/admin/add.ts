@@ -46,10 +46,11 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
   const setsHtml = [...groups.entries()]
     .map(([, items]) => {
       const used = items.some((i) => i.used_count > 0);
+      const status = used ? 'posted' : 'queued';
       const lastUsed = items.find((i) => i.last_used_at)?.last_used_at;
       const badge = used
         ? `<span class="badge posted" title="${lastUsed ? new Date(lastUsed * 1000).toLocaleString() : ''}">POSTED</span>`
-        : `<span class="badge unused">UNUSED</span>`;
+        : `<span class="badge queued">QUEUED</span>`;
       const sortedItems = [...items].sort((a, b) => (a.set_order ?? 0) - (b.set_order ?? 0));
       const firstImg = sortedItems[0]?.thumb_url ?? sortedItems[0]?.image_url ?? '';
       const dateLabel = items[0]?.inserted_at
@@ -58,16 +59,17 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
       const titleHint = items[0]?.alt || `Set of ${items.length}`;
       const searchData = escapeHtml(`${titleHint} ${items[0]?.source ?? ''}`);
       const tiles = sortedItems
-        .map(
-          (p) => `
+        .map((p) => {
+          const photoUsed = (p.used_count ?? 0) > 0;
+          return `
         <div class="set-tile" data-id="${p.id}">
           <img src="${escapeHtml(p.thumb_url ?? p.image_url)}" loading="lazy" alt="">
-          <button class="tile-del" data-id="${p.id}" title="Remove">✕</button>
-        </div>`,
-        )
+          ${photoUsed ? '' : `<button class="tile-del" data-id="${p.id}" title="Remove">✕</button>`}
+        </div>`;
+        })
         .join('');
       return `
-      <div class="asset-card" data-search="${searchData}">
+      <div class="asset-card" data-status="${status}" data-search="${searchData}">
         <div class="asset-thumb">
           <img src="${escapeHtml(firstImg)}" loading="lazy" alt="">
         </div>
@@ -83,8 +85,8 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
 
   const pageActions = `
     <div class="stat-tiles">
-      <div class="stat-tile"><div class="stat-tile-label">UNUSED</div><div class="stat-tile-value">${counts.unusedSets}</div></div>
-      <div class="stat-tile active"><div class="stat-tile-label">APPROVED</div><div class="stat-tile-value">${counts.approved}</div></div>
+      <div class="stat-tile active"><div class="stat-tile-label">QUEUED</div><div class="stat-tile-value">${counts.unusedSets}</div></div>
+      <div class="stat-tile"><div class="stat-tile-label">TOTAL</div><div class="stat-tile-value">${counts.approved}</div></div>
       <div class="stat-tile"><div class="stat-tile-label">POSTED</div><div class="stat-tile-value">${counts.posted}</div></div>
     </div>`;
 
@@ -117,9 +119,10 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
     <div>
       <div class="section-header">
         <div class="card-title" style="margin:0">▦ Active Pool Assets</div>
-        <div style="display:flex;gap:6px">
-          <button class="icon-btn" title="Filter">⛌</button>
-          <button class="icon-btn" title="Sort">⇅</button>
+        <div class="pills">
+          <span class="pill active" data-filter="all">All (${(counts.approved ?? 0)})</span>
+          <span class="pill" data-filter="queued"><span class="dot" style="color:#d97706"></span>Queued</span>
+          <span class="pill" data-filter="posted"><span class="dot" style="color:#4a7c2c"></span>Posted</span>
         </div>
       </div>
       <div id="assetList">
@@ -160,6 +163,14 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
     .result { margin-top:10px; padding:9px 12px; border-radius:8px; font-size:13px; word-break:break-all; line-height:1.5; }
     .result.ok { background:var(--leaf-soft); border:1px solid #c5d6a8; color:var(--leaf); }
     .result.err { background:#fbe4dd; border:1px solid #e8b9aa; color:#b94a35; }
+
+    .multi-progress { margin-top:10px; }
+    .progress-bar { height:6px; background:var(--surface-2); border-radius:999px; overflow:hidden; }
+    .progress-fill { height:100%; background:var(--brand); border-radius:999px; transition:width 0.18s; }
+    .progress-text { font-size:12px; color:var(--text-muted); margin-top:6px; }
+
+    /* Filter pills in section header — smaller variant */
+    .section-header .pills .pill { padding:5px 10px; font-size:11.5px; }
   </style>
   `;
 
@@ -168,6 +179,7 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
     const KEY = ${JSON.stringify(key)};
     const $ = (id) => document.getElementById(id);
 
+    // Multi-add with live progress + clear summary
     async function add() {
       const $btn = $('submit'), $result = $('result');
       const urls = $('urls').value.split(/\\s+/).map(s => s.trim()).filter(Boolean);
@@ -176,9 +188,13 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
       const alt = $('alt').value.trim();
       const setId = 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
       $btn.disabled = true;
-      $result.innerHTML = '';
-      let ok = 0, fail = 0;
-      const lines = [];
+      const origLabel = $btn.textContent;
+      $result.innerHTML = '<div class="multi-progress"><div class="progress-bar"><div class="progress-fill" style="width:0%"></div></div><div class="progress-text">Adding 0/' + urls.length + '...</div></div>';
+      const $fill = $result.querySelector('.progress-fill');
+      const $text = $result.querySelector('.progress-text');
+
+      let ok = 0, dup = 0, fail = 0;
+      const failedLines = [];
       for (let i = 0; i < urls.length; i++) {
         try {
           const res = await fetch('/admin/add/url?key=' + encodeURIComponent(KEY), {
@@ -187,26 +203,53 @@ function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, n
             body: JSON.stringify({ url: urls[i], source, alt, set_id: setId, set_order: i }),
           });
           const data = await res.json();
-          if (res.ok) { ok++; lines.push('<div class="result ok">✓ ' + (data.duplicate ? 'already in pool' : 'added id=' + data.id) + ': ' + urls[i] + '</div>'); }
-          else { fail++; lines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + urls[i] + '</div>'); }
+          if (res.ok) {
+            if (data.duplicate) dup++; else ok++;
+          } else {
+            fail++;
+            failedLines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + urls[i].slice(0, 60) + '</div>');
+          }
         } catch (err) {
-          fail++; lines.push('<div class="result err">✗ ' + err.message + ': ' + urls[i] + '</div>');
+          fail++;
+          failedLines.push('<div class="result err">✗ ' + err.message + '</div>');
         }
+        const done = i + 1;
+        const pct = Math.round((done / urls.length) * 100);
+        if ($fill) $fill.style.width = pct + '%';
+        if ($text) $text.textContent = 'Adding ' + done + '/' + urls.length + '... (✓ ' + ok + ' new · ' + dup + ' dup · ' + fail + ' failed)';
+        $btn.textContent = '⤴ Adding ' + done + '/' + urls.length + '...';
       }
-      $result.innerHTML = lines.join('');
+
+      // Final summary
+      const summary = '<div class="result ok">✓ ' + ok + ' added' + (ok > 1 ? ' as 1 set of ' + (ok + dup) : '') + (dup > 0 ? ' · ' + dup + ' duplicate' : '') + (fail > 0 ? ' · ' + fail + ' failed' : '') + '</div>';
+      $result.innerHTML = summary + failedLines.join('');
+      $btn.textContent = origLabel;
+
       if (ok > 0) {
         $('urls').value = '';
         $('alt').value = '';
-        setTimeout(() => location.reload(), 700);
+        setTimeout(() => location.reload(), 1000);
       }
       $btn.disabled = false;
     }
     $('submit')?.addEventListener('click', add);
 
-    // FAB / sidebar Add to pool → focus textarea
+    // FAB / sidebar Add to pool → open Pinterest in new tab
     document.addEventListener('cv-add', () => {
-      $('urls')?.focus();
-      $('addCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      window.open('https://www.pinterest.com/search/pins/?q=cozy%20room', '_blank', 'noopener');
+    });
+
+    // Filter pills
+    document.querySelectorAll('.pill[data-filter]').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        const filter = pill.dataset.filter;
+        document.querySelectorAll('.pill[data-filter]').forEach((p) => p.classList.remove('active'));
+        pill.classList.add('active');
+        document.querySelectorAll('.asset-card').forEach((card) => {
+          const status = card.dataset.status;
+          card.style.display = (filter === 'all' || status === filter) ? '' : 'none';
+        });
+      });
     });
 
     document.querySelectorAll('button.tile-del').forEach((btn) => {

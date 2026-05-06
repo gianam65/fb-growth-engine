@@ -108,8 +108,8 @@ const SHARED_CSS = `
 
   /* Badges — bigger, solid backgrounds for clear classification */
   .badge { display:inline-flex; align-items:center; gap:5px; padding:5px 12px; border-radius:999px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; line-height:1; }
-  .badge.unused { background:var(--warning); color:#fff; box-shadow:0 1px 2px rgba(217,119,6,0.25); }
-  .badge.unused::before { content:"○"; font-size:13px; line-height:1; }
+  .badge.queued { background:var(--warning); color:#fff; box-shadow:0 1px 2px rgba(217,119,6,0.25); }
+  .badge.queued::before { content:"⏱"; font-size:11px; line-height:1; }
   .badge.posted { background:var(--leaf); color:#fff; box-shadow:0 1px 2px rgba(74,124,44,0.25); }
   .badge.posted::before { content:"✓"; font-weight:900; font-size:12px; }
   .badge.approved { background:var(--info); color:#fff; }
@@ -154,7 +154,6 @@ export function renderLayout(opts: LayoutOpts): string {
     </div>
     ${item('photos', '📷', 'Photo Pool', `/admin/add?key=${k}`)}
     ${item('affiliate', '🛒', 'Affiliate Pool', `/admin/affiliate?key=${k}`)}
-    <a class="nav-item" href="#" onclick="alert('Settings coming soon');return false;"><span class="ico">⚙</span>Settings</a>
     <div class="nav-spacer"></div>
     <div class="sidebar-bottom">
       <button class="btn-primary" id="sidebarAddBtn">+ Add to pool</button>

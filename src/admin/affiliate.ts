@@ -54,14 +54,15 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
   const itemsHtml = products
     .map((p) => {
       const isPosted = p.used_count > 0;
+      const status = isPosted ? 'posted' : 'queued';
       const badge = isPosted
         ? `<span class="badge posted" title="${p.last_used_at ? new Date(p.last_used_at * 1000).toLocaleString() : ''}">POSTED ${p.used_count}×</span>`
-        : `<span class="badge unused">UNUSED</span>`;
+        : `<span class="badge queued">QUEUED</span>`;
       const { price, performance } = splitPrice(p.price);
       const titleEsc = escapeHtml(p.title ?? '(no title)');
       const searchData = `${titleEsc} ${escapeHtml(p.affiliate_url)}`;
       return `
-      <div class="aff-row" data-search="${searchData}">
+      <div class="aff-row" data-status="${status}" data-search="${searchData}">
         <img src="${escapeHtml(p.image_url ?? '')}" loading="lazy" alt="">
         <div class="aff-info">
           <div class="aff-title">${titleEsc}</div>
@@ -76,7 +77,7 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
           <div class="col-val">${escapeHtml(performance)}</div>
         </div>
         <a class="shopee-btn" href="${escapeHtml(p.affiliate_url)}" target="_blank" rel="noopener">Shopee Link</a>
-        <button class="aff-del" data-id="${p.id}" title="Remove">✕</button>
+        ${isPosted ? '<span class="aff-del-spacer"></span>' : `<button class="aff-del" data-id="${p.id}" title="Remove">✕</button>`}
       </div>`;
     })
     .join('');
@@ -84,8 +85,9 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
   const content = `
   <div class="aff-toolbar">
     <div class="pills">
-      <span class="pill active"><span class="dot" style="color:#d97706"></span>UNUSED (${counts.unused ?? 0})</span>
-      <span class="pill"><span class="dot" style="color:#4a7c2c"></span>POSTED (${counts.used ?? 0})</span>
+      <span class="pill active" data-filter="all">All (${(counts.approved ?? 0)})</span>
+      <span class="pill" data-filter="queued"><span class="dot" style="color:#d97706"></span>Queued (${counts.unused ?? 0})</span>
+      <span class="pill" data-filter="posted"><span class="dot" style="color:#4a7c2c"></span>Posted (${counts.used ?? 0})</span>
     </div>
   </div>
 
@@ -111,6 +113,7 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
     .shopee-btn:hover { background:var(--brand-hover); }
     .aff-del { width:32px; height:32px; padding:0; border:0; background:transparent; color:var(--text-subtle); border-radius:8px; cursor:pointer; font-size:14px; }
     .aff-del:hover { background:#fbe4dd; color:#b94a35; }
+    .aff-del-spacer { width:32px; }
     .empty-state { text-align:center; padding:40px 20px; color:var(--text-muted); font-size:13.5px; background:var(--surface); border:1px dashed var(--border-strong); border-radius:12px; }
     @media (max-width: 980px) {
       .aff-row { grid-template-columns:64px 1fr auto; }
@@ -123,6 +126,25 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
   const bodyExtraScript = `
   (() => {
     const KEY = ${JSON.stringify(key)};
+
+    // FAB / sidebar Add → open Shopee affiliate dashboard in new tab
+    document.addEventListener('cv-add', () => {
+      window.open('https://affiliate.shopee.vn/offer/product_offer', '_blank', 'noopener');
+    });
+
+    // Filter pills
+    document.querySelectorAll('.pill[data-filter]').forEach((pill) => {
+      pill.addEventListener('click', () => {
+        const filter = pill.dataset.filter;
+        document.querySelectorAll('.pill[data-filter]').forEach((p) => p.classList.remove('active'));
+        pill.classList.add('active');
+        document.querySelectorAll('.aff-row').forEach((row) => {
+          const status = row.dataset.status;
+          row.style.display = (filter === 'all' || status === filter) ? '' : 'none';
+        });
+      });
+    });
+
     document.querySelectorAll('button.aff-del').forEach((btn) => {
       btn.addEventListener('click', async (e) => {
         e.preventDefault(); e.stopPropagation();
@@ -140,16 +162,13 @@ function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<
         }
       });
     });
-    document.addEventListener('cv-add', () => {
-      alert('Affiliate products: open affiliate.shopee.vn and click 💾 CV in the Chrome extension.');
-    });
   })();
   `;
 
   const pageActions = `
     <div class="stat-tiles">
-      <div class="stat-tile active"><div class="stat-tile-label">UNUSED</div><div class="stat-tile-value">${counts.unused ?? 0}</div></div>
-      <div class="stat-tile"><div class="stat-tile-label">APPROVED</div><div class="stat-tile-value">${counts.approved ?? 0}</div></div>
+      <div class="stat-tile active"><div class="stat-tile-label">QUEUED</div><div class="stat-tile-value">${counts.unused ?? 0}</div></div>
+      <div class="stat-tile"><div class="stat-tile-label">TOTAL</div><div class="stat-tile-value">${counts.approved ?? 0}</div></div>
       <div class="stat-tile"><div class="stat-tile-label">POSTED</div><div class="stat-tile-value">${counts.used ?? 0}</div></div>
     </div>`;
 
