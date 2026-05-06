@@ -4,7 +4,7 @@
 // extracts it + scrapes title/image of THAT card → sends to Worker.
 // Also: floating "💾 Save all on this page" batch button.
 
-const CV_VERSION = '1.8.3';
+const CV_VERSION = '1.9.0';
 
 (() => {
   if (window.__cvInjected) return;

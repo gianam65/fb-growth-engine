@@ -49,84 +49,12 @@ async function resolveShortLink(shortUrl) {
   return null;
 }
 
-async function fetchShopeeMediaViaApi(parsed) {
-  const apiUrl = `https://shopee.vn/api/v4/item/get?itemid=${parsed.itemid}&shopid=${parsed.shopid}`;
-  const res = await fetch(apiUrl, {
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      Referer: `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`,
-      'X-API-SOURCE': 'pc',
-    },
-  });
-  if (!res.ok) throw new Error('api ' + res.status);
-  const json = await res.json();
-  if (json.error || !json.data) throw new Error('shopee error ' + (json.error_msg || json.error || 'no data'));
-  const data = json.data;
-  const image_urls = (data.images || []).map((hash) => IMG_BASE + hash);
-  let video_url = null;
-  const v = data.video_info_list && data.video_info_list[0];
-  if (v) {
-    const list = v.video_url_list || [];
-    const sorted = [...list].sort((a, b) => (b.default_format?.height || 0) - (a.default_format?.height || 0));
-    video_url = (sorted[0] && sorted[0].url) || (v.default_format && v.default_format.url) || null;
-  }
-  return { title: data.name || '', image_urls, video_url };
-}
-
-async function fetchShopeeMediaViaHtml(productUrl) {
-  // Fallback: scrape product page HTML for og:image + og:video + JSON-LD images.
-  const res = await fetch(productUrl, { credentials: 'include', redirect: 'follow' });
-  if (!res.ok) throw new Error('html ' + res.status);
-  const html = await res.text();
-
-  const images = new Set();
-  const ogImg = (html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) || [])[1];
-  if (ogImg) images.add(ogImg);
-
-  const ogVid = (html.match(/<meta\s+property=["']og:video(?::secure_url)?["']\s+content=["']([^"']+)["']/i) || [])[1];
-  let video_url = ogVid || null;
-
-  // Try JSON-LD structured data
-  const ldRe = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let ldMatch;
-  let title = '';
-  while ((ldMatch = ldRe.exec(html))) {
-    try {
-      const ld = JSON.parse(ldMatch[1]);
-      if (Array.isArray(ld.image)) ld.image.forEach((u) => images.add(u));
-      else if (typeof ld.image === 'string') images.add(ld.image);
-      if (ld.video?.contentUrl) video_url = video_url || ld.video.contentUrl;
-      if (ld.name && !title) title = ld.name;
-    } catch {}
-  }
-
-  // Try Shopee's window.__INITIAL_STATE__ if present
-  const stateMatch = html.match(/window\.__INITIAL_STATE__\s*=\s*({[\s\S]*?})\s*<\/script>/);
-  if (stateMatch) {
-    try {
-      const state = JSON.parse(stateMatch[1]);
-      const candidates = [state?.product?.data, state?.item?.data, state?.item, state?.product];
-      for (const d of candidates) {
-        if (!d) continue;
-        if (Array.isArray(d.images)) d.images.forEach((h) => images.add(IMG_BASE + h));
-        if (d.video_info_list?.[0]) {
-          const v = d.video_info_list[0];
-          video_url = video_url || v.default_format?.url || v.video_url_list?.[0]?.url || null;
-        }
-        if (d.name && !title) title = d.name;
-        break;
-      }
-    } catch {}
-  }
-
-  return { title, image_urls: [...images], video_url };
-}
-
-// Open the product URL in a background tab, wait for SPA to render, scrape
-// images + video from DOM, close tab. Bypasses anti-bot because this runs
-// as a real page in user's browser.
-async function fetchShopeeMediaViaTab(productUrl) {
+// Open the product URL in a hidden tab, wait for SPA to render, scrape
+// ONLY video URLs from DOM. Images intentionally NOT scraped — DOM has
+// many product/variant/related images mixed together that produce wrong
+// thumbnails. The listing-card image_url (captured at click time) is more
+// reliable for a single product preview.
+async function fetchVideoViaTab(productUrl) {
   let tab;
   try {
     tab = await chrome.tabs.create({ url: productUrl, active: false });
@@ -135,71 +63,53 @@ async function fetchShopeeMediaViaTab(productUrl) {
   }
 
   try {
-    // Don't wait for 'complete' event — Shopee's SPA never reliably fires
-    // it (long-polling). Fixed 9s wait is enough for product images/video
-    // to render in DOM.
+    // Fixed wait — Shopee SPA never reliably fires 'complete'.
     await new Promise((r) => setTimeout(r, 9000));
 
     const [exec] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        // ----- images -----
-        const imgs = new Set();
-        for (const img of document.images) {
-          const src = img.src || img.getAttribute('data-src') || '';
-          if (!/susercontent\.com|shopee\.vn/i.test(src)) continue;
-          if ((img.naturalWidth || 0) < 200) continue;
-          imgs.add(src);
-        }
-
-        // ----- videos: try multiple sources -----
         const videos = new Set();
+
         // 1) <video src> + <source src>
         for (const v of document.querySelectorAll('video, video source')) {
           const src = v.src || v.getAttribute('src') || v.currentSrc || '';
           if (src && /^https?:/i.test(src) && !src.startsWith('blob:')) videos.add(src);
         }
-        // 2) Search HTML source for known Shopee video CDN patterns (mp4, m3u8)
+
+        // 2) Search HTML source for Shopee video CDN patterns (.mp4)
         const html = document.documentElement.innerHTML;
         const cdnPatterns = [
-          /https?:\/\/[a-z0-9\-.]*(?:susercontent|shopeevn|shopee\.cf|cvf\.shopee)\.(?:com|vn|cf)\/file\/[a-zA-Z0-9_-]+\.mp4(?:\?[^"'\s)]*)?/gi,
-          /https?:\/\/[^"'\s)<>]+\.(?:mp4|m3u8)(?:\?[^"'\s)]*)?/gi,
+          /https?:\/\/[a-z0-9\-.]*(?:susercontent|shopeevn|shopee\.cf|cvf\.shopee|vod\.susercontent)\.(?:com|vn|cf|sg)\/[^"'\s)<>]*\.mp4(?:\?[^"'\s)]*)?/gi,
+          /https?:\/\/[^"'\s)<>]+\.mp4(?:\?[^"'\s)]*)?/gi,
         ];
         for (const re of cdnPatterns) {
           const matches = html.match(re) || [];
           for (const m of matches) {
-            // Filter blob/data
             if (m.startsWith('blob:') || m.startsWith('data:')) continue;
             videos.add(m);
           }
         }
-        // 3) Search data attributes (some video components store URL in data-*)
+
+        // 3) data attributes
         for (const el of document.querySelectorAll('[data-video-url], [data-src*=".mp4"], [data-href*=".mp4"]')) {
           const src = el.getAttribute('data-video-url') || el.getAttribute('data-src') || el.getAttribute('data-href') || '';
           if (src && /^https?:/i.test(src)) videos.add(src);
         }
 
-        const titleEl = document.querySelector('h1, [class*="product-title" i]');
-        const title = (titleEl?.innerText || document.title || '').replace(/\s+/g, ' ').trim().slice(0, 200);
-
-        // Prefer .mp4 over .m3u8 (FB Reels needs mp4)
+        // Prefer .mp4 (FB Reels can't play HLS m3u8)
         const sortedVideos = [...videos].sort((a, b) => {
           const ax = /\.mp4/i.test(a) ? 0 : 1;
           const bx = /\.mp4/i.test(b) ? 0 : 1;
           return ax - bx;
         });
 
-        return {
-          images: [...imgs],
-          videos: sortedVideos,
-          title,
-          html_size: html.length,
-        };
+        return { videos: sortedVideos };
       },
     });
 
-    const r = exec?.result || { images: [], videos: [], title: '' };
-    return { ...r };
+    const r = exec?.result || { videos: [] };
+    return { videos: r.videos || [] };
   } finally {
     try { await chrome.tabs.remove(tab.id); } catch {}
   }
@@ -210,41 +120,22 @@ async function fetchShopeeMedia(productUrl) {
   if (!parsed) return { error: 'cannot parse productUrl' };
   const canonical = `https://shopee.vn/product/${parsed.shopid}/${parsed.itemid}`;
 
-  // Try API (richest data, but Shopee usually 403s extension)
-  let errs = [];
+  // Only fetch VIDEO via hidden tab. Images stay as the listing thumbnail
+  // (data.image_url already captured at click time — accurate for the
+  // specific product card the user clicked).
   try {
-    const m = await fetchShopeeMediaViaApi(parsed);
-    if (m.image_urls.length > 0) {
-      return { product_url: canonical, shopid: parsed.shopid, itemid: parsed.itemid, ...m, source: 'api' };
-    }
-  } catch (e) { errs.push('api: ' + String(e).slice(0, 60)); }
-
-  // Try HTML scrape (often empty for SPA)
-  try {
-    const m = await fetchShopeeMediaViaHtml(productUrl);
-    if (m.image_urls.length > 0) {
-      return { product_url: canonical, shopid: parsed.shopid, itemid: parsed.itemid, ...m, source: 'html' };
-    }
-  } catch (e) { errs.push('html: ' + String(e).slice(0, 60)); }
-
-  // Last resort: open hidden tab, scrape rendered DOM
-  try {
-    const m = await fetchShopeeMediaViaTab(canonical);
-    if (m.images.length > 0 || m.videos.length > 0) {
-      return {
-        product_url: canonical,
-        shopid: parsed.shopid,
-        itemid: parsed.itemid,
-        title: m.title || '',
-        image_urls: m.images,
-        video_url: m.videos[0] || null,
-        source: 'hidden-tab',
-      };
-    }
-    errs.push('tab: 0 media');
-  } catch (e) { errs.push('tab: ' + String(e).slice(0, 60)); }
-
-  return { error: errs.join(' | '), parsed };
+    const m = await fetchVideoViaTab(canonical);
+    return {
+      product_url: canonical,
+      shopid: parsed.shopid,
+      itemid: parsed.itemid,
+      image_urls: [],   // intentionally empty — Worker falls back to listing image_url
+      video_url: m.videos[0] || null,
+      source: 'tab-video-only',
+    };
+  } catch (e) {
+    return { error: 'tab: ' + String(e).slice(0, 100), parsed };
+  }
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -274,18 +165,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       }
       if (productUrl) data.product_url = productUrl;
 
-      // Step B: fetch Shopee item API for full media (still using session)
+      // Step B: fetch VIDEO only via hidden tab (skip image scrape — listing
+      // thumbnail in data.image_url is accurate; DOM scrape for images was
+      // mixing unrelated/variant images).
       if (productUrl) {
         try {
           const media = await fetchShopeeMedia(productUrl);
           trace.media = media.error
             ? { ok: false, error: media.error }
-            : { ok: true, images: media.image_urls?.length, has_video: !!media.video_url };
+            : { ok: true, has_video: !!media.video_url };
           console.log('[CV-bg] media result:', trace.media);
           if (!media.error) {
-            data.media_urls = media.image_urls;
+            // Don't set media_urls — Worker uses listing image_url instead.
             data.video_url = media.video_url;
-            if (!data.title || data.title.length < 5) data.title = media.title;
             data.shopee_shopid = media.shopid;
             data.shopee_itemid = media.itemid;
           } else {

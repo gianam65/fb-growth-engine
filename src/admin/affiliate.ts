@@ -1,5 +1,5 @@
 import type { Env } from '@/lib/env';
-import { parseProductUrl, fetchShopeeItem, resolveShortLink } from '@/lib/shopee';
+import { parseProductUrl, resolveShortLink } from '@/lib/shopee';
 import { renderLayout } from '@/admin/layout';
 
 // Affiliate product pool — populated by the Chrome extension and consumed by
@@ -252,9 +252,8 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
     }
     debug.parsed = parsed;
 
-    // Use media from extension (if it pre-fetched with user's Shopee session)
-    const extensionMedia = Array.isArray(body.media_urls) && body.media_urls.length > 0;
-    const mediaUrlsJson = extensionMedia ? JSON.stringify(body.media_urls) : null;
+    // Extension only sends video_url (if any); image stays as listing thumbnail.
+    // Don't try server-side Shopee item API — Shopee anti-bot 403s it anyway.
     const finalShopid = body.shopee_shopid ?? parsed?.shopid ?? null;
     const finalItemid = body.shopee_itemid ?? parsed?.itemid ?? null;
 
@@ -262,7 +261,7 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
       `INSERT INTO affiliate_products
          (source, source_id, title, price, image_url, affiliate_url, source_url, category, status,
           product_url, shopee_shopid, shopee_itemid, media_urls, video_url, media_fetched_at, media_fetch_error)
-       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?, ?, ?, ?, ?)
+       VALUES ('shopee', ?, ?, ?, ?, ?, ?, ?, 'APPROVED', ?, ?, ?, NULL, ?, ?, ?)
        RETURNING id`,
     )
       .bind(
@@ -276,48 +275,24 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
         productUrl,
         finalShopid,
         finalItemid,
-        mediaUrlsJson,
         body.video_url ?? null,
-        extensionMedia ? Math.floor(Date.now() / 1000) : null,
+        body.video_url ? Math.floor(Date.now() / 1000) : null,
         body.media_fetch_error ?? null,
       )
       .first<{ id: number }>();
 
-    // If extension didn't provide media (or only partial), and we have shopid+itemid,
-    // fall back to server-side fetch (works only if Shopee doesn't gate on cookies).
-    let mediaResult: { images: number; has_video: boolean; source: string } | null = extensionMedia
-      ? { images: body.media_urls!.length, has_video: !!body.video_url, source: 'extension' }
-      : null;
-    if (!mediaResult && parsed) {
-      try {
-        const media = await fetchShopeeItem(parsed.shopid, parsed.itemid);
-        if (media && media.image_urls.length > 0) {
-          await env.DB.prepare(
-            `UPDATE affiliate_products
-               SET title = COALESCE(NULLIF(title, ''), ?),
-                   media_urls = ?,
-                   video_url = ?,
-                   media_fetched_at = unixepoch(),
-                   media_fetch_error = NULL
-             WHERE id = ?`,
-          )
-            .bind(media.title, JSON.stringify(media.image_urls), media.video_url, result?.id)
-            .run();
-          mediaResult = { images: media.image_urls.length, has_video: !!media.video_url, source: 'worker' };
-        } else {
-          await env.DB.prepare(
-            `UPDATE affiliate_products SET media_fetch_error = 'item API returned null/empty' WHERE id = ?`,
-          ).bind(result?.id).run();
-        }
-      } catch (err) {
-        await env.DB.prepare(
-          `UPDATE affiliate_products SET media_fetch_error = ? WHERE id = ?`,
-        ).bind(String(err).slice(0, 300), result?.id).run();
-      }
-    }
-
     return Response.json(
-      { ok: true, id: result?.id, product_url: productUrl, parsed, media: mediaResult, debug },
+      {
+        ok: true,
+        id: result?.id,
+        product_url: productUrl,
+        parsed,
+        media: {
+          image_source: 'listing-thumbnail',
+          has_video: !!body.video_url,
+        },
+        debug,
+      },
       { headers: CORS_HEADERS },
     );
   }
