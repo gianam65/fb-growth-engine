@@ -88,16 +88,19 @@ async function dispatchAndAlert(env: Env, workflowFile: string, label: string, a
 async function tgSend(env: Env, text: string): Promise<void> {
   if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
   try {
-    await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
+    const res = await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         chat_id: env.TELEGRAM_CHAT_ID,
         text,
-        parse_mode: 'Markdown',
         disable_web_page_preview: true,
       }),
     });
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`tgSend HTTP ${res.status}: ${body.slice(0, 250)}`);
+    }
   } catch (err) {
     console.error('tgSend failed', err);
   }

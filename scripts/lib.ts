@@ -66,16 +66,28 @@ export async function d1Query<T = unknown>(
 }
 
 export async function tgSend(env: ScriptEnv, text: string): Promise<void> {
-  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) return;
+  if (!env.TELEGRAM_BOT_TOKEN || !env.TELEGRAM_CHAT_ID) {
+    console.warn('tgSend: TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID not set');
+    return;
+  }
   const url = `https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/sendMessage`;
-  await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      chat_id: env.TELEGRAM_CHAT_ID,
-      text,
-      parse_mode: 'Markdown',
-      disable_web_page_preview: true,
-    }),
-  });
+  // No parse_mode — plain text. Markdown was silently failing on titles
+  // containing (), *, _, etc. URLs still auto-link in Telegram clients.
+  try {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        chat_id: env.TELEGRAM_CHAT_ID,
+        text,
+        disable_web_page_preview: true,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      console.warn(`tgSend HTTP ${res.status}: ${body.slice(0, 250)}`);
+    }
+  } catch (err) {
+    console.warn('tgSend error:', String(err).slice(0, 200));
+  }
 }
