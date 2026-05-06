@@ -152,6 +152,25 @@ async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption:
   return json.post_id ?? json.id ?? 'unknown';
 }
 
+// ----------- FB comment on own post -----------
+
+async function postFbComment(env: ScriptEnv, postId: string, message: string): Promise<string> {
+  const url = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}/${postId}/comments`;
+  const params = new URLSearchParams();
+  params.set('message', message);
+  params.set('access_token', env.FB_PAGE_ACCESS_TOKEN);
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: params,
+  });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`FB comment ${res.status}: ${text.slice(0, 400)}`);
+  const json = JSON.parse(text) as { id?: string };
+  if (!json.id) throw new Error(`FB comment no id: ${text}`);
+  return json.id;
+}
+
 // ----------- main -----------
 
 async function main() {
@@ -210,8 +229,11 @@ async function main() {
   console.log(`  caption: ${captionSpec.caption}`);
   console.log(`  hashtags: ${captionSpec.hashtags}`);
 
-  // Caption layout: ✨ {hook}: {affiliate_url}\n\n{hashtags}
-  const message = `✨ ${captionSpec.caption}: ${row.affiliate_url}\n\n${captionSpec.hashtags}`;
+  // Caption layout: clean — NO link in caption (FB algorithm downranks
+  // posts with external URLs by 30-50%). Affiliate link goes in the
+  // first comment ~2.5 min after publish (algorithm has "seen" the post
+  // by then and assigned baseline reach).
+  const message = `✨ ${captionSpec.caption}\n\n${captionSpec.hashtags}`;
 
   console.log(`[3/4] Publishing ${kind}…`);
   let fbPostId: string;
@@ -249,7 +271,7 @@ async function main() {
   }
   console.log(`  fb_post_id: ${fbPostId} (${postedKind})`);
 
-  console.log('[4/4] Recording fb_post_id + posted_kind (used_count already claimed)…');
+  console.log('[4/5] Recording fb_post_id + posted_kind (used_count already claimed)…');
   await d1Query(
     env,
     `UPDATE affiliate_products
@@ -263,6 +285,26 @@ async function main() {
     env,
     `✅ Affiliate ${postedKind} published\n${row.title?.slice(0, 80) ?? row.affiliate_url}\n${captionSpec.caption}\nhttps://www.facebook.com/${fbPostId}`,
   );
+
+  console.log('[5/5] Waiting 2.5 min, then posting affiliate link as first comment…');
+  // Give FB algorithm time to "see" the link-free post and assign baseline
+  // reach. Then add the link in a comment — FB doesn't penalize comments
+  // with external URLs the way it does captions.
+  await new Promise((r) => setTimeout(r, 150_000));
+
+  const commentMsg = `🛍 Mua tại đây nha: ${row.affiliate_url}`;
+  try {
+    const commentId = await postFbComment(env, fbPostId, commentMsg);
+    console.log(`  comment_id: ${commentId}`);
+  } catch (err) {
+    // Comment is optional — post itself already succeeded. Just alert.
+    console.warn('  link comment failed:', String(err).slice(0, 200));
+    await tgSend(
+      env,
+      `⚠ Affiliate post ${fbPostId} published OK but link-comment failed:\n${String(err).slice(0, 200)}\n\nManual: comment "${commentMsg}" on the post.`,
+    );
+  }
+
   console.log('Done.');
 }
 
