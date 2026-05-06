@@ -19,6 +19,8 @@ export interface Env {
   ADMIN_TOKEN: string;
   PINTEREST_APP_ID?: string;
   PINTEREST_APP_SECRET?: string;
+  GH_PAT?: string;     // GitHub PAT with workflow scope (for /retry commands)
+  GH_REPO?: string;    // 'owner/repo'
 }
 
 export type FbEvent =
