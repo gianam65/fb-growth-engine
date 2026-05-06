@@ -20,6 +20,7 @@
     "script:populate-pool": "tsx scripts/populate-pool.ts",
     "script:sync-pinterest": "tsx scripts/sync-pinterest.ts",
     "script:affiliate-post": "tsx scripts/affiliate-post.ts",
+    "script:watchdog": "tsx scripts/watchdog.ts",
     "script:pull-insights": "tsx scripts/pull-insights.ts",
     "script:daily-report": "tsx scripts/daily-report.ts"
   },
