@@ -1,0 +1,44 @@
+name: Setup Telegram webhook
+
+# One-shot workflow to point Telegram bot at the Worker /telegram/webhook
+# endpoint. Re-run any time you change the Worker URL.
+
+on:
+  workflow_dispatch:
+    inputs:
+      worker_url:
+        description: 'Worker base URL (no trailing slash)'
+        required: true
+        default: 'https://fb-growth-engine.namgia-dev.workers.dev'
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: setWebhook
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TG_SECRET: ${{ secrets.FB_VERIFY_TOKEN }}
+          WORKER_URL: ${{ inputs.worker_url }}
+        run: |
+          set -e
+          echo "Setting webhook → ${WORKER_URL}/telegram/webhook"
+          response=$(curl -s "https://api.telegram.org/bot${TG_TOKEN}/setWebhook" \
+            -d "url=${WORKER_URL}/telegram/webhook" \
+            -d "secret_token=${TG_SECRET}" \
+            -d "allowed_updates=[\"message\"]")
+          echo "Response: $response"
+          ok=$(echo "$response" | grep -o '"ok":true' || true)
+          if [ -z "$ok" ]; then
+            echo "::error::setWebhook failed"
+            exit 1
+          fi
+          echo "✓ Webhook set"
+
+      - name: Verify webhook
+        env:
+          TG_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+        run: |
+          curl -s "https://api.telegram.org/bot${TG_TOKEN}/getWebhookInfo" | head -c 1000
+          echo
