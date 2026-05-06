@@ -157,27 +157,32 @@ async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption:
 async function main() {
   const env = loadEnv();
 
-  console.log('[1/4] Picking oldest-unused affiliate product (with any image)…');
-  // Accept any product that has at least one image source (media_urls OR
-  // image_url thumbnail) OR a video. Shopee's anti-bot often blocks extension
-  // from getting full media → image_url (listing thumbnail) is the reliable
-  // fallback for a single-photo post.
-  const rows = await d1Query<AffRow>(
+  console.log('[1/4] Atomically claiming oldest-unused product (race-safe)…');
+  // ATOMIC CLAIM: increment used_count = 1 BEFORE publishing. If two crons
+  // (e.g., GH cron + Worker watchdog) fire concurrently, only one gets the
+  // RETURNING row; the other's UPDATE matches 0 rows. Trades retry-on-fail
+  // for zero-duplicate guarantee — if FB publish fails, product is "used"
+  // and won't be picked again. User can manually reset used_count=0 to retry.
+  const claimed = await d1Query<AffRow>(
     env,
-    `SELECT id, title, affiliate_url, product_url, media_urls, video_url, image_url,
-            used_count, last_used_at
-       FROM affiliate_products
-      WHERE status = 'APPROVED'
-        AND (media_urls IS NOT NULL OR video_url IS NOT NULL OR image_url IS NOT NULL)
-      ORDER BY COALESCE(last_used_at, 0) ASC, id ASC
-      LIMIT 1`,
+    `UPDATE affiliate_products
+        SET used_count = used_count + 1, last_used_at = unixepoch()
+      WHERE id = (
+        SELECT id FROM affiliate_products
+         WHERE status = 'APPROVED'
+           AND used_count = 0
+           AND (media_urls IS NOT NULL OR video_url IS NOT NULL OR image_url IS NOT NULL)
+         ORDER BY COALESCE(last_used_at, 0) ASC, id ASC
+         LIMIT 1
+      )
+   RETURNING id, title, affiliate_url, product_url, media_urls, video_url, image_url, used_count, last_used_at`,
   );
-  const row = rows[0];
+  const row = claimed[0];
   if (!row) {
-    console.log('No affiliate products with media available — exiting gracefully.');
+    console.log('No affiliate products available (or all just claimed by another run) — exiting gracefully.');
     return;
   }
-  console.log(`  picked id=${row.id}: ${row.title?.slice(0, 80) || '(no title)'}`);
+  console.log(`  claimed id=${row.id}: ${row.title?.slice(0, 80) || '(no title)'}`);
 
   // Image sources in priority order: media_urls > image_url thumbnail
   const images: string[] = (() => {
@@ -222,25 +227,36 @@ async function main() {
     if (kind === 'reels' && hasImages) {
       console.warn(`  Reels failed: ${String(err).slice(0, 200)}`);
       console.log('  Falling back to single-photo post…');
-      fbPostId = await publishSinglePhotoPost(env, images[0]!, message);
-      postedKind = 'photo';
+      try {
+        fbPostId = await publishSinglePhotoPost(env, images[0]!, message);
+        postedKind = 'photo';
+      } catch (err2) {
+        // Both attempts failed. Product already marked used (claim above) so
+        // won't retry automatically. Telegram alert + record error.
+        await d1Query(env,
+          `UPDATE affiliate_products SET media_fetch_error = ? WHERE id = ?`,
+          [`publish failed: reels=${String(err).slice(0, 100)} | photo=${String(err2).slice(0, 100)}`, row.id]);
+        await tgSend(env, `❌ Affiliate post FAILED (id=${row.id}, won't auto-retry)\n${row.title?.slice(0, 80) ?? row.affiliate_url}\nReels: ${String(err).slice(0, 100)}\nPhoto: ${String(err2).slice(0, 100)}\n\nManual retry: \`UPDATE affiliate_products SET used_count=0 WHERE id=${row.id};\``);
+        throw err2;
+      }
     } else {
+      await d1Query(env,
+        `UPDATE affiliate_products SET media_fetch_error = ? WHERE id = ?`,
+        [`publish failed: ${String(err).slice(0, 200)}`, row.id]);
+      await tgSend(env, `❌ Affiliate post FAILED (id=${row.id}, won't auto-retry)\n${row.title?.slice(0, 80) ?? row.affiliate_url}\nError: ${String(err).slice(0, 200)}\n\nManual retry: \`UPDATE affiliate_products SET used_count=0 WHERE id=${row.id};\``);
       throw err;
     }
   }
   console.log(`  fb_post_id: ${fbPostId} (${postedKind})`);
 
-  console.log('[4/4] Marking used + logging…');
-  const now = Math.floor(Date.now() / 1000);
+  console.log('[4/4] Recording fb_post_id + posted_kind (used_count already claimed)…');
   await d1Query(
     env,
     `UPDATE affiliate_products
-        SET used_count = used_count + 1,
-            last_used_at = ?,
-            posted_kind = ?,
+        SET posted_kind = ?,
             fb_post_id = ?
       WHERE id = ?`,
-    [now, postedKind, fbPostId, row.id],
+    [postedKind, fbPostId, row.id],
   );
 
   await tgSend(

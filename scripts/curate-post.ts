@@ -155,34 +155,34 @@ async function main() {
   const env = loadEnv();
   const args = parseArgs();
 
-  console.log(`[1/5] Picking the oldest-unused APPROVED set from curated pool...`);
-  // 1. Find next set: aggregate per set_id, pick the one with smallest max(last_used_at)
-  const nextSet = await d1Query<{ set_id: string; cnt: number; last_used: number | null }>(
+  console.log(`[1/5] Atomically claiming oldest-unused set from curated pool...`);
+  // ATOMIC CLAIM (race-safe): UPDATE used_count+=1 + last_used_at=now on ALL
+  // photos in the chosen set in ONE statement. If two crons fire concurrently
+  // (e.g., GH cron + Worker watchdog), only one wins the claim — the other
+  // sees no rows updated.
+  const claimedRows = await d1Query<PoolRow>(
     env,
-    `SELECT set_id,
-            COUNT(*) AS cnt,
-            MAX(COALESCE(last_used_at, 0)) AS last_used
-       FROM curated_photos
-      WHERE status = 'APPROVED' AND set_id IS NOT NULL
-      GROUP BY set_id
-      ORDER BY last_used ASC, MIN(id) ASC
-      LIMIT 1`,
+    `UPDATE curated_photos
+        SET used_count = used_count + 1, last_used_at = unixepoch()
+      WHERE set_id = (
+        SELECT set_id FROM (
+          SELECT set_id, MAX(COALESCE(last_used_at, 0)) AS last_used
+            FROM curated_photos
+           WHERE status = 'APPROVED' AND set_id IS NOT NULL AND used_count = 0
+           GROUP BY set_id
+           ORDER BY last_used ASC, MIN(id) ASC
+           LIMIT 1
+        )
+      )
+   RETURNING id, source, source_id, source_url, image_url, photographer, photographer_url, alt, width, height, set_id, set_order`,
   );
-  const setId = nextSet[0]?.set_id;
-  if (!setId) {
-    throw new Error(
-      `Pool is empty: 0 APPROVED sets. Add photos via /admin/add (each submit = 1 set).`,
-    );
+  if (claimedRows.length === 0) {
+    console.log('No unused APPROVED sets (or all just claimed by another run) — exiting gracefully.');
+    return;
   }
-  // 2. Fetch all photos in that set, ordered by set_order
-  const rows = await d1Query<PoolRow>(
-    env,
-    `SELECT id, source, source_id, source_url, image_url, photographer, photographer_url, alt, width, height
-       FROM curated_photos
-      WHERE status = 'APPROVED' AND set_id = ?
-      ORDER BY set_order ASC, id ASC`,
-    [setId],
-  );
+  // Sort by set_order (RETURNING doesn't preserve our ORDER BY)
+  const rows = [...claimedRows].sort((a, b) => ((a as PoolRow & { set_order?: number }).set_order ?? 0) - ((b as PoolRow & { set_order?: number }).set_order ?? 0));
+  const setId = (claimedRows[0] as PoolRow & { set_id?: string }).set_id ?? '';
   console.log(`  set_id: ${setId} (${rows.length} photo${rows.length === 1 ? '' : 's'})`);
   for (const p of rows) {
     console.log(`  📷 ${p.photographer ?? '(unknown)'} (${p.source}:${p.source_id}, ${p.width}x${p.height})`);
@@ -257,15 +257,8 @@ async function main() {
   const fbPostId = await publishFeedPost(env, mediaIds, message);
   console.log(`  fb_post_id: ${fbPostId}`);
 
-  console.log(`[5/5] Marking pool photos as used + logging fb_posts...`);
+  console.log(`[5/5] Logging fb_posts (used_count already claimed in step 1)...`);
   const now = Math.floor(Date.now() / 1000);
-  for (const r of rows) {
-    await d1Query(
-      env,
-      `UPDATE curated_photos SET used_count = used_count + 1, last_used_at = ? WHERE id = ?`,
-      [now, r.id],
-    );
-  }
   await d1Query(
     env,
     `INSERT INTO fb_posts (fb_post_id, theme, caption, hashtags, style_preset, num_photos, photo_fbids, scenes, source, credits, published_at)
