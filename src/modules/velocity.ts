@@ -1,10 +1,12 @@
 import type { Env, FbEvent } from '@/lib/env';
 import { FbClient } from '@/fb/client';
-import { classifyIntent } from '@/ai/intent';
+import { classifyAndReply } from '@/ai/intent';
 
 // Module A — Engagement Velocity Engine
 // Replies to incoming comments quickly to boost early-window engagement.
-// Skips: bot's own replies, very short noise, comments under bot replies.
+// Single Gemini call per comment: classifies intent + generates a personalized
+// Vietnamese reply (no static templates — every reply is unique).
+// Skips: bot's own replies, duplicates (already replied), SPAM intents.
 export async function runVelocity(
   event: Extract<FbEvent, { kind: 'comment' }>,
   env: Env,
@@ -12,14 +14,15 @@ export async function runVelocity(
   // Don't reply to own page's comments
   if (event.fromId === env.FB_PAGE_ID) return;
 
-  // Already seen this comment? skip (webhook can fire duplicates)
+  // Already seen this comment? skip (webhook can fire duplicates / funnel
+  // module may have already replied → bot_replied = 1)
   const seen = await env.DB.prepare('SELECT bot_replied FROM comments WHERE id = ?')
     .bind(event.commentId)
     .first<{ bot_replied: number }>();
   if (seen?.bot_replied === 1) return;
 
-  // Classify intent (cheap call, ~100 tokens)
-  const intent = await classifyIntent(event.message, env);
+  // AI classifies + generates reply in one call
+  const ai = await classifyAndReply(event.message, event.fromName, env);
 
   // Insert/update record
   await env.DB.prepare(
@@ -35,36 +38,19 @@ export async function runVelocity(
       event.fromName ?? null,
       event.message,
       event.createdTime,
-      intent,
+      ai.intent,
     )
     .run();
 
-  // SPAM: log only, don't reply
-  if (intent === 'SPAM') return;
-  // PRICE: if funnel had matched, it would have set bot_replied=1 already
-  // and we'd have returned earlier. Reaching here means funnel didn't match
-  // the keyword → still send a generic public reply via velocity.
+  // SPAM or empty AI reply → log only
+  if (ai.intent === 'SPAM' || !ai.reply_text) return;
 
-  let tpl = await pickTemplate(env, intent);
-  if (!tpl) {
-    // Fall back to OTHER template when no template exists for this intent
-    // (e.g., PRICE without funnel match — we don't want silent skips).
-    tpl = await pickTemplate(env, 'OTHER');
-  }
-  if (!tpl) return;
-  // Vietnamese names: address by given name (last word), not family name (first word).
-  const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';
-  const text = tpl.replace('{name}', firstName).replace(/\\n/g, '\n');
+  const text = ai.reply_text;
 
-  // Random delay 30-90s to look natural. Workers can't sleep that long in a
-  // single request — schedule via setTimeout-like pattern using waitUntil isn't
-  // viable here. Instead we reply immediately; "natural delay" is achieved
-  // because the queue itself adds 1-5s latency, and Workers don't replicate
-  // human typing time anyway. Algorithm only cares about engagement *within*
-  // the early window (first ~30 min), not millisecond timing.
   // Random 5-25s sleep so the reply doesn't look like an instant bot to FB's
   // spam filter (which has been observed to hide instant page replies).
   await new Promise((r) => setTimeout(r, 5000 + Math.floor(Math.random() * 20000)));
+
   const fb = new FbClient(env);
   try {
     const r = await fb.replyComment(event.commentId, text);
@@ -78,21 +64,4 @@ export async function runVelocity(
     // We swallow and log — don't retry forever
     console.error('replyComment failed', String(err));
   }
-}
-
-async function pickTemplate(env: Env, intent: string): Promise<string | null> {
-  const rows = await env.DB.prepare(
-    'SELECT template, weight FROM reply_templates WHERE intent = ? AND active = 1',
-  )
-    .bind(intent)
-    .all<{ template: string; weight: number }>();
-  const list = rows.results ?? [];
-  if (list.length === 0) return null;
-  const total = list.reduce((s, r) => s + r.weight, 0);
-  let pick = Math.floor(Math.random() * total);
-  for (const r of list) {
-    pick -= r.weight;
-    if (pick < 0) return r.template;
-  }
-  return list[0]?.template ?? null;
 }
