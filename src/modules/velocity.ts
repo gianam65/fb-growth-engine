@@ -39,11 +39,18 @@ export async function runVelocity(
     )
     .run();
 
-  // SPAM intents: log only, don't reply
-  if (intent === 'SPAM' || intent === 'PRICE') return;
-  // PRICE is handled by funnel module — if we're here, funnel didn't match keyword
+  // SPAM: log only, don't reply
+  if (intent === 'SPAM') return;
+  // PRICE: if funnel had matched, it would have set bot_replied=1 already
+  // and we'd have returned earlier. Reaching here means funnel didn't match
+  // the keyword → still send a generic public reply via velocity.
 
-  const tpl = await pickTemplate(env, intent);
+  let tpl = await pickTemplate(env, intent);
+  if (!tpl) {
+    // Fall back to OTHER template when no template exists for this intent
+    // (e.g., PRICE without funnel match — we don't want silent skips).
+    tpl = await pickTemplate(env, 'OTHER');
+  }
   if (!tpl) return;
   // Vietnamese names: address by given name (last word), not family name (first word).
   const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';

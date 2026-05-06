@@ -31,15 +31,19 @@ export async function classifyIntent(message: string, env: Env): Promise<Intent>
   if (trimmed.length === 0) return 'OTHER';
   if (trimmed.length <= 2) return 'OTHER';
 
-  // Quick keyword fast-path (saves API calls on obvious cases)
+  // Quick keyword fast-path (saves API calls on obvious cases).
+  // PRAISE check first — "đã mua / cũng mua" should beat the "mua" PRICE
+  // signal (people who already bought are praising, not asking price).
   const lower = trimmed.toLowerCase();
-  if (/giá|bao nhiêu|mua|ship|cod|inbox|báo giá|còn không|còn ko|cách đặt/.test(lower)) {
-    return 'PRICE';
-  }
-  if (/đẹp|xinh|iu|yêu|thích|like|tim|chill|cute|ưng|mê|ghiền|ngầu|đỉnh|tuyệt|wow|❤️|💕|🥰|😍/.test(lower)) {
+  if (/đẹp|xinh|iu|yêu|thích|like|tim|chill|cute|ưng|mê|ghiền|ngầu|đỉnh|tuyệt|wow|ưa|❤️|💕|🥰|😍/.test(lower)) {
     return 'PRAISE';
   }
-  if (/\?|kích thước|size|chất liệu|material|làm bằng|dùng được|mua ở đâu|có sẵn|còn hàng|màu khác|loại khác/.test(lower)) {
+  // PRICE: only explicit purchase intent (not standalone "mua" which catches
+  // past-tense "đã mua / cũng mua").
+  if (/giá|bao nhiêu|báo giá|inbox shop|inbox riêng|còn không|còn ko|cách đặt|muốn mua|mua ở đâu|mua như nào|mua sao|mua thế nào|order|đặt hàng|cod\b|ship\b/.test(lower)) {
+    return 'PRICE';
+  }
+  if (/\?|kích thước|size|chất liệu|material|làm bằng|dùng được|có sẵn|còn hàng|màu khác|loại khác/.test(lower)) {
     return 'QUESTION';
   }
 
