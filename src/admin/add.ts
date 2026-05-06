@@ -1,4 +1,5 @@
 import type { Env } from '@/lib/env';
+import { renderLayout } from '@/admin/layout';
 
 // Photos pool admin — paste image URLs from any source (Pinterest, IG, etc.)
 // + view all approved photos with posted/unused status + delete.
@@ -34,7 +35,7 @@ function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
 }
 
-const PAGE_HTML = (key: string, photos: PhotoRow[], counts: Record<string, number>) => {
+function buildPageHtml(key: string, photos: PhotoRow[], counts: Record<string, number>): string {
   const groups = new Map<string, PhotoRow[]>();
   for (const p of photos) {
     const k = p.set_id || `singleton-${p.id}`;
@@ -47,185 +48,198 @@ const PAGE_HTML = (key: string, photos: PhotoRow[], counts: Record<string, numbe
       const used = items.some((i) => i.used_count > 0);
       const lastUsed = items.find((i) => i.last_used_at)?.last_used_at;
       const badge = used
-        ? `<span class="badge ok" title="${lastUsed ? new Date(lastUsed * 1000).toLocaleString() : ''}">✅ Posted</span>`
-        : `<span class="badge gray">○ Unused</span>`;
+        ? `<span class="badge posted" title="${lastUsed ? new Date(lastUsed * 1000).toLocaleString() : ''}">POSTED</span>`
+        : `<span class="badge unused">UNUSED</span>`;
       const sortedItems = [...items].sort((a, b) => (a.set_order ?? 0) - (b.set_order ?? 0));
+      const firstImg = sortedItems[0]?.thumb_url ?? sortedItems[0]?.image_url ?? '';
+      const dateLabel = items[0]?.inserted_at
+        ? new Date(items[0].inserted_at * 1000).toLocaleDateString('en-GB')
+        : '';
+      const titleHint = items[0]?.alt || `Set of ${items.length}`;
+      const searchData = escapeHtml(`${titleHint} ${items[0]?.source ?? ''}`);
       const tiles = sortedItems
         .map(
           (p) => `
-        <div class="tile" data-id="${p.id}">
+        <div class="set-tile" data-id="${p.id}">
           <img src="${escapeHtml(p.thumb_url ?? p.image_url)}" loading="lazy" alt="">
-          <button class="del-btn" data-id="${p.id}" title="Remove from pool">✕</button>
+          <button class="tile-del" data-id="${p.id}" title="Remove">✕</button>
         </div>`,
         )
         .join('');
-      const setLabel = items.length > 1 ? `Set of ${items.length} · ` : '';
-      const dateLabel = items[0]?.inserted_at
-        ? new Date(items[0].inserted_at * 1000).toLocaleDateString('vi-VN')
-        : '';
       return `
-      <div class="set">
-        <div class="set-header">
-          <div class="set-meta">${badge} <span class="muted">${setLabel}${escapeHtml(items[0]?.source ?? '')} · ${dateLabel}</span></div>
+      <div class="asset-card" data-search="${searchData}">
+        <div class="asset-thumb">
+          <img src="${escapeHtml(firstImg)}" loading="lazy" alt="">
         </div>
-        <div class="tiles">${tiles}</div>
+        <div class="asset-info">
+          <div class="asset-row">${badge}<span class="asset-date">${dateLabel}</span></div>
+          <div class="asset-title">${escapeHtml(titleHint)}</div>
+          <div class="asset-meta"><span class="src-pill">↗ ${escapeHtml(items[0]?.source ?? '')}</span> <span class="muted">▦ ${items.length} Asset${items.length > 1 ? 's' : ''}</span></div>
+          <div class="set-tiles">${tiles}</div>
+        </div>
       </div>`;
     })
     .join('');
 
-  return `<!doctype html>
-<html lang="vi"><head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Photos pool</title>
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin:0; background:#0e0e10; color:#eaeaea; font-family:-apple-system,system-ui,"Segoe UI",sans-serif; }
-  body { min-height:100vh; padding:20px 16px 60px; max-width:880px; margin:0 auto; }
-  h1 { font-size:22px; margin:0 0 4px; font-weight:700; letter-spacing:-0.01em; }
-  .nav { display:flex; gap:6px; margin:8px 0 18px; flex-wrap:wrap; }
-  .nav a { color:#9eb8ff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:8px; background:#1c1c20; border:1px solid #2a2a30; }
-  .nav a.active { background:#2d2d35; color:#fff; border-color:#3a3a44; }
-  .nav a:hover { background:#26262c; }
-  .stats { display:flex; gap:8px; margin:14px 0 22px; flex-wrap:wrap; }
-  .stats span { padding:6px 12px; border-radius:999px; background:#1c1c20; font-size:12px; border:1px solid #2a2a30; }
-  .stats b { color:#fff; font-weight:600; }
-  .stats .a { color:#7be88a; }
-  .stats .r { color:#ff8a8a; }
+  const pageActions = `
+    <div class="stat-tiles">
+      <div class="stat-tile"><div class="stat-tile-label">UNUSED</div><div class="stat-tile-value">${counts.unusedSets}</div></div>
+      <div class="stat-tile active"><div class="stat-tile-label">APPROVED</div><div class="stat-tile-value">${counts.approved}</div></div>
+      <div class="stat-tile"><div class="stat-tile-label">POSTED</div><div class="stat-tile-value">${counts.posted}</div></div>
+    </div>`;
 
-  /* form card */
-  .card { background:#1a1a1f; border:1px solid #2a2a30; border-radius:14px; padding:18px; margin-bottom:24px; }
-  .label { font-size:12px; color:#999; text-transform:uppercase; letter-spacing:0.05em; margin:14px 0 6px; font-weight:600; }
-  .label:first-child { margin-top:0; }
-  textarea, input { width:100%; background:#101013; border:1px solid #2a2a30; color:#eaeaea; padding:11px 13px; border-radius:9px; font-size:14px; font-family:ui-monospace,Menlo,monospace; transition:border-color 0.15s; }
-  textarea { min-height:110px; resize:vertical; }
-  input { font-family:inherit; }
-  textarea:focus, input:focus { outline:none; border-color:#5a8dff; }
-  button.primary { width:100%; padding:13px; border:0; border-radius:9px; font-size:14px; font-weight:600; background:linear-gradient(180deg,#3ae07f,#2ec968); color:#001a0a; cursor:pointer; margin-top:14px; transition:transform 0.05s; }
-  button.primary:hover { transform:translateY(-1px); }
-  button.primary:disabled { opacity:.5; cursor:wait; transform:none; }
-  .hint { font-size:12px; color:#888; margin-top:8px; line-height:1.55; }
-  kbd { background:#26262c; padding:1px 6px; border-radius:4px; font-family:ui-monospace,Menlo,monospace; font-size:11px; color:#bbb; }
+  const content = `
+  <div class="grid-2">
+    <div class="card" id="addCard">
+      <div class="card-title">📤 Add New Assets</div>
+      <label class="field-label">Image URLs</label>
+      <textarea id="urls" class="input" placeholder="Paste image links here (one per line)..."></textarea>
 
-  .result { margin-top:12px; padding:9px 12px; border-radius:8px; font-size:13px; word-break:break-all; line-height:1.5; }
-  .ok { background:rgba(58,224,127,0.1); border:1px solid rgba(58,224,127,0.3); color:#7be88a; }
-  .err { background:rgba(255,138,138,0.1); border:1px solid rgba(255,138,138,0.3); color:#ff8a8a; }
+      <div class="row-2">
+        <div>
+          <label class="field-label">Source ↗</label>
+          <input id="source" class="input" type="text" value="pinterest">
+        </div>
+        <div>
+          <label class="field-label">Alt text</label>
+          <input id="alt" class="input" type="text" placeholder="Interior design, living room…">
+        </div>
+      </div>
 
-  /* sets list */
-  h2 { font-size:15px; margin:24px 0 12px; color:#aaa; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
-  .set { background:#1a1a1f; border:1px solid #2a2a30; border-radius:12px; padding:12px; margin-bottom:10px; }
-  .set-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:0 2px; }
-  .set-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:12px; }
-  .muted { color:#888; }
-  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
-  .badge.ok { background:rgba(58,224,127,0.15); color:#7be88a; }
-  .badge.gray { background:#26262c; color:#aaa; }
-  .badge.red { background:rgba(255,138,138,0.15); color:#ff8a8a; }
+      <div class="hint-box" style="margin-top:14px">
+        <span style="color:#1ad482">ⓘ</span> Pin 2-3 ảnh CÙNG 1 phòng → paste cùng lần để thành 1 set. Cron sẽ pick từng set → mỗi post là 1 carousel coherent.
+      </div>
 
-  .tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; }
-  .tile { position:relative; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#0a0a0c; }
-  .tile img { width:100%; height:100%; object-fit:cover; display:block; }
-  .tile .del-btn { position:absolute; top:6px; right:6px; width:24px; height:24px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,0.7); color:#ff8a8a; cursor:pointer; font-size:13px; line-height:24px; opacity:0; transition:opacity 0.15s, background 0.15s; }
-  .tile:hover .del-btn { opacity:1; }
-  .tile .del-btn:hover { background:rgba(255,138,138,0.2); }
-  .tile.deleting { opacity:0.3; transform:scale(0.95); transition:opacity 0.2s, transform 0.2s; }
+      <button id="submit" class="btn-primary" style="margin-top:14px;width:100%">⤴ Add to pool</button>
+      <div id="result"></div>
+    </div>
 
-  .empty { text-align:center; padding:40px 20px; color:#666; font-size:14px; background:#1a1a1f; border:1px dashed #2a2a30; border-radius:12px; }
-</style>
-</head><body>
+    <div>
+      <div class="section-header">
+        <div class="card-title" style="margin:0">▦ Active Pool Assets</div>
+        <div style="display:flex;gap:6px">
+          <button class="icon-btn" title="Filter">⛌</button>
+          <button class="icon-btn" title="Sort">⇅</button>
+        </div>
+      </div>
+      <div id="assetList">
+        ${photos.length === 0 ? '<div class="empty-state">Pool is empty. Paste image URLs to start.</div>' : setsHtml}
+      </div>
+    </div>
+  </div>
+  `;
 
-<h1>Photos pool</h1>
-<div class="nav">
-  <a class="active" href="/admin/add?key=${encodeURIComponent(key)}">🖼 Photos</a>
-  <a href="/admin/affiliate?key=${encodeURIComponent(key)}">🛍 Affiliate</a>
-</div>
+  const extraStyle = `
+  <style>
+    .grid-2 { display:grid; grid-template-columns:1fr 1.15fr; gap:18px; }
+    @media (max-width:980px) { .grid-2 { grid-template-columns:1fr; } }
+    .row-2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+    .section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:0 2px; }
+    .empty-state { text-align:center; padding:40px 20px; color:#666; font-size:13.5px; background:#0f1115; border:1px dashed #1f2127; border-radius:12px; }
 
-<div class="stats">
-  <span class="a">UNUSED <b>${counts.unusedSets}</b> sets</span>
-  <span>APPROVED <b>${counts.approved}</b> photos</span>
-  <span>POSTED <b>${counts.posted}</b> photos</span>
-</div>
+    .asset-card { display:flex; gap:14px; background:#0f1115; border:1px solid #1a1c20; border-radius:12px; padding:14px; margin-bottom:10px; transition:border-color 0.12s; }
+    .asset-card:hover { border-color:#2a2c32; }
+    .asset-thumb { width:100px; height:100px; flex-shrink:0; border-radius:10px; overflow:hidden; background:#0a0b0e; }
+    .asset-thumb img { width:100%; height:100%; object-fit:cover; }
+    .asset-info { flex:1; min-width:0; }
+    .asset-row { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:6px; }
+    .asset-date { font-size:11px; color:#666; }
+    .asset-title { font-size:15px; font-weight:600; margin-bottom:6px; line-height:1.3; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
+    .asset-meta { display:flex; gap:10px; align-items:center; font-size:11.5px; margin-bottom:8px; }
+    .src-pill { color:#9eb8ff; }
+    .muted { color:#666; }
 
-<div class="card">
-  <div class="label">Image URLs — one per line. <b style="color:#fff">Each submit = 1 SET = 1 FB post</b></div>
-  <textarea id="urls" placeholder="https://i.pinimg.com/photo-of-room.jpg&#10;https://i.pinimg.com/same-room-detail.jpg"></textarea>
-  <div class="hint">Pin 2-3 ảnh CÙNG 1 phòng → paste cùng lần để thành 1 set. Cron sẽ pick từng set → mỗi post là 1 carousel coherent.</div>
+    .set-tiles { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+    .set-tile { position:relative; width:60px; height:60px; border-radius:8px; overflow:hidden; background:#0a0b0e; }
+    .set-tile img { width:100%; height:100%; object-fit:cover; }
+    .set-tile .tile-del { position:absolute; top:3px; right:3px; width:20px; height:20px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,0.75); color:#ff8a8a; cursor:pointer; font-size:11px; line-height:20px; opacity:0; transition:opacity 0.12s; }
+    .set-tile:hover .tile-del { opacity:1; }
+    .set-tile .tile-del:hover { background:rgba(255,138,138,0.25); }
+    .set-tile.deleting { opacity:0.3; }
 
-  <div class="label">Source <span class="muted">(optional)</span></div>
-  <input id="source" type="text" placeholder="pinterest" value="pinterest">
+    .result { margin-top:10px; padding:9px 12px; border-radius:8px; font-size:13px; word-break:break-all; line-height:1.5; }
+    .result.ok { background:rgba(30,225,138,0.1); border:1px solid rgba(30,225,138,0.25); color:#1ad482; }
+    .result.err { background:rgba(255,138,138,0.1); border:1px solid rgba(255,138,138,0.25); color:#ff8a8a; }
+  </style>
+  `;
 
-  <div class="label">Alt text <span class="muted">(optional, used by Gemini for caption)</span></div>
-  <input id="alt" type="text" placeholder="cozy bedroom warm light plants">
+  const bodyExtraScript = `
+  (() => {
+    const KEY = ${JSON.stringify(key)};
+    const $ = (id) => document.getElementById(id);
 
-  <button id="submit" class="primary">Add to pool</button>
-  <div id="result"></div>
-</div>
-
-<h2>Pool (${photos.length} photos)</h2>
-${photos.length === 0 ? '<div class="empty">Pool is empty. Paste image URLs above to start.</div>' : setsHtml}
-
-<script>
-(() => {
-  const KEY = ${JSON.stringify(key)};
-  const $ = (id) => document.getElementById(id);
-
-  async function add() {
-    const $btn = $('submit'), $result = $('result');
-    const urls = $('urls').value.split(/\\s+/).map(s => s.trim()).filter(Boolean);
-    if (urls.length === 0) { alert('Paste at least one URL'); return; }
-    const source = $('source').value.trim() || 'manual';
-    const alt = $('alt').value.trim();
-    const setId = 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
-    $btn.disabled = true;
-    $result.innerHTML = '';
-    let ok = 0, fail = 0;
-    const lines = [];
-    for (let i = 0; i < urls.length; i++) {
-      try {
-        const res = await fetch('/admin/add/url?key=' + encodeURIComponent(KEY), {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: urls[i], source, alt, set_id: setId, set_order: i }),
-        });
-        const data = await res.json();
-        if (res.ok) { ok++; lines.push('<div class="result ok">✓ ' + (data.duplicate ? 'already in pool: ' : 'added id=' + data.id + ': ') + urls[i] + '</div>'); }
-        else { fail++; lines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + urls[i] + '</div>'); }
-      } catch (err) {
-        fail++; lines.push('<div class="result err">✗ ' + err.message + ': ' + urls[i] + '</div>');
+    async function add() {
+      const $btn = $('submit'), $result = $('result');
+      const urls = $('urls').value.split(/\\s+/).map(s => s.trim()).filter(Boolean);
+      if (urls.length === 0) { alert('Paste at least one URL'); return; }
+      const source = $('source').value.trim() || 'manual';
+      const alt = $('alt').value.trim();
+      const setId = 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
+      $btn.disabled = true;
+      $result.innerHTML = '';
+      let ok = 0, fail = 0;
+      const lines = [];
+      for (let i = 0; i < urls.length; i++) {
+        try {
+          const res = await fetch('/admin/add/url?key=' + encodeURIComponent(KEY), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ url: urls[i], source, alt, set_id: setId, set_order: i }),
+          });
+          const data = await res.json();
+          if (res.ok) { ok++; lines.push('<div class="result ok">✓ ' + (data.duplicate ? 'already in pool' : 'added id=' + data.id) + ': ' + urls[i] + '</div>'); }
+          else { fail++; lines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + urls[i] + '</div>'); }
+        } catch (err) {
+          fail++; lines.push('<div class="result err">✗ ' + err.message + ': ' + urls[i] + '</div>');
+        }
       }
-    }
-    $result.innerHTML = lines.join('') + '<div class="hint" style="margin-top:10px">Done: ' + ok + ' added' + (ok > 1 ? ' as 1 set of ' + ok : '') + ', ' + fail + ' failed.</div>';
-    if (ok > 0) {
-      $('urls').value = '';
-      $('alt').value = '';
-      setTimeout(() => location.reload(), 800);
-    }
-    $btn.disabled = false;
-  }
-  $('submit').addEventListener('click', add);
-
-  document.querySelectorAll('button.del-btn').forEach((btn) => {
-    btn.addEventListener('click', async (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const id = btn.dataset.id;
-      if (!confirm('Delete photo id=' + id + '?')) return;
-      const tile = btn.closest('.tile');
-      tile.classList.add('deleting');
-      try {
-        const res = await fetch('/admin/add/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
-        if (!res.ok) throw new Error(await res.text());
-        tile.remove();
-      } catch (err) {
-        tile.classList.remove('deleting');
-        alert('Delete failed: ' + err.message);
+      $result.innerHTML = lines.join('');
+      if (ok > 0) {
+        $('urls').value = '';
+        $('alt').value = '';
+        setTimeout(() => location.reload(), 700);
       }
+      $btn.disabled = false;
+    }
+    $('submit')?.addEventListener('click', add);
+
+    // FAB / sidebar Add to pool → focus textarea
+    document.addEventListener('cv-add', () => {
+      $('urls')?.focus();
+      $('addCard')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
+
+    document.querySelectorAll('button.tile-del').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const id = btn.dataset.id;
+        if (!confirm('Delete photo id=' + id + '?')) return;
+        const tile = btn.closest('.set-tile');
+        tile.classList.add('deleting');
+        try {
+          const res = await fetch('/admin/add/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
+          if (!res.ok) throw new Error(await res.text());
+          tile.remove();
+        } catch (err) {
+          tile.classList.remove('deleting');
+          alert('Delete failed: ' + err.message);
+        }
+      });
+    });
+  })();
+  `;
+
+  return renderLayout({
+    key,
+    currentPage: 'photos',
+    pageTitle: 'Photo Pool',
+    pageSubtitle: 'Manage and curate your high-velocity visual assets.',
+    pageActions,
+    content: extraStyle + content,
+    searchPlaceholder: 'Search pool...',
+    bodyExtraScript,
   });
-})();
-</script>
-</body></html>`;
-};
+}
 
 export async function handleAdminAdd(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
@@ -251,7 +265,7 @@ export async function handleAdminAdd(req: Request, env: Env): Promise<Response> 
     ).first<{ approved: number | null; posted: number | null; unused_sets: number | null }>();
 
     return new Response(
-      PAGE_HTML(env.ADMIN_TOKEN, photosResult.results ?? [], {
+      buildPageHtml(env.ADMIN_TOKEN, photosResult.results ?? [], {
         approved: counts?.approved ?? 0,
         posted: counts?.posted ?? 0,
         unusedSets: counts?.unused_sets ?? 0,

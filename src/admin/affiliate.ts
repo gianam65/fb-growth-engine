@@ -1,5 +1,6 @@
 import type { Env } from '@/lib/env';
 import { parseProductUrl, fetchShopeeItem, resolveShortLink } from '@/lib/shopee';
+import { renderLayout } from '@/admin/layout';
 
 // Affiliate product pool — populated by the Chrome extension and consumed by
 // curate-post.ts (one product per FB post, posted as a comment).
@@ -41,100 +42,134 @@ function checkAdminBearer(req: Request, env: Env): boolean {
   return !!m && !!env.ADMIN_TOKEN && m[1] === env.ADMIN_TOKEN;
 }
 
-const STATUS_HTML = (key: string, products: ProductRow[], counts: Record<string, number>) => {
-  const rows = products
+function splitPrice(text: string | null): { price: string; performance: string } {
+  if (!text) return { price: '', performance: '' };
+  // Examples: "₫207.000 50k+ lượt bán" → ["₫207.000", "50k+ lượt bán"]
+  const m = text.match(/^(₫[\d.,]+|\d[\d.,]*\s*₫|[\d.,]+\s*đ)?\s*(.*)$/i);
+  if (m && m[1]) return { price: m[1].trim(), performance: (m[2] ?? '').trim() };
+  return { price: text, performance: '' };
+}
+
+function buildAffiliatePage(key: string, products: ProductRow[], counts: Record<string, number>): string {
+  const itemsHtml = products
     .map((p) => {
-      const usedBadge = p.used_count > 0
-        ? `<span class="badge ok" title="${p.last_used_at ? new Date(p.last_used_at * 1000).toLocaleString() : ''}">✅ Posted ${p.used_count}×</span>`
-        : `<span class="badge gray">○ Unused</span>`;
-      const statusBadge = p.status !== 'APPROVED' ? `<span class="badge red">${p.status}</span>` : '';
+      const isPosted = p.used_count > 0;
+      const badge = isPosted
+        ? `<span class="badge posted" title="${p.last_used_at ? new Date(p.last_used_at * 1000).toLocaleString() : ''}">POSTED ${p.used_count}×</span>`
+        : `<span class="badge unused">UNUSED</span>`;
+      const { price, performance } = splitPrice(p.price);
+      const titleEsc = escapeHtml(p.title ?? '(no title)');
+      const searchData = `${titleEsc} ${escapeHtml(p.affiliate_url)}`;
       return `
-      <div class="item" data-id="${p.id}">
+      <div class="aff-row" data-search="${searchData}">
         <img src="${escapeHtml(p.image_url ?? '')}" loading="lazy" alt="">
-        <div class="item-body">
-          <div class="title">${escapeHtml(p.title ?? '(no title)')}</div>
-          <div class="meta">${usedBadge} ${statusBadge} ${p.price ? `<span class="muted">${escapeHtml(p.price)}</span>` : ''}</div>
-          <a class="link" href="${escapeHtml(p.affiliate_url)}" target="_blank" rel="noopener">${escapeHtml(p.affiliate_url)}</a>
+        <div class="aff-info">
+          <div class="aff-title">${titleEsc}</div>
+          ${badge}
         </div>
-        <button class="del-btn" data-id="${p.id}" title="Remove">✕</button>
+        <div class="col">
+          <div class="col-label">PRICE</div>
+          <div class="col-val">${escapeHtml(price)}</div>
+        </div>
+        <div class="col">
+          <div class="col-label">PERFORMANCE</div>
+          <div class="col-val">${escapeHtml(performance)}</div>
+        </div>
+        <a class="shopee-btn" href="${escapeHtml(p.affiliate_url)}" target="_blank" rel="noopener">Shopee Link</a>
+        <button class="aff-del" data-id="${p.id}" title="Remove">✕</button>
       </div>`;
     })
     .join('');
-  return `<!doctype html>
-<html lang="vi"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Affiliate pool</title>
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin:0; background:#0e0e10; color:#eaeaea; font-family:-apple-system,system-ui,"Segoe UI",sans-serif; }
-  body { min-height:100vh; padding:20px 16px 60px; max-width:880px; margin:0 auto; }
-  h1 { font-size:22px; margin:0 0 4px; font-weight:700; letter-spacing:-0.01em; }
-  .nav { display:flex; gap:6px; margin:8px 0 18px; flex-wrap:wrap; }
-  .nav a { color:#9eb8ff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:8px; background:#1c1c20; border:1px solid #2a2a30; }
-  .nav a.active { background:#2d2d35; color:#fff; border-color:#3a3a44; }
-  .nav a:hover { background:#26262c; }
-  .stats { display:flex; gap:8px; margin:14px 0 22px; flex-wrap:wrap; }
-  .stats span { padding:6px 12px; border-radius:999px; background:#1c1c20; font-size:12px; border:1px solid #2a2a30; }
-  .stats b { color:#fff; font-weight:600; }
-  .stats .a { color:#7be88a; }
-  h2 { font-size:15px; margin:24px 0 12px; color:#aaa; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
-  .item { display:flex; gap:12px; align-items:center; background:#1a1a1f; border:1px solid #2a2a30; border-radius:12px; padding:10px 12px; margin-bottom:8px; position:relative; transition:opacity 0.2s; }
-  .item img { width:64px; height:64px; object-fit:cover; border-radius:8px; background:#0a0a0c; flex-shrink:0; }
-  .item-body { flex:1; min-width:0; }
-  .title { font-weight:600; font-size:14px; margin-bottom:4px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
-  .meta { font-size:12px; margin:4px 0; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-  .muted { color:#888; }
-  .link { color:#9eb8ff; font-size:11px; text-decoration:none; word-break:break-all; opacity:0.7; }
-  .link:hover { opacity:1; }
-  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
-  .badge.ok { background:rgba(58,224,127,0.15); color:#7be88a; }
-  .badge.gray { background:#26262c; color:#aaa; }
-  .badge.red { background:rgba(255,138,138,0.15); color:#ff8a8a; }
-  button.del-btn { position:absolute; top:10px; right:10px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:transparent; color:#666; cursor:pointer; font-size:14px; transition:background 0.15s, color 0.15s; flex-shrink:0; }
-  button.del-btn:hover { background:rgba(255,138,138,0.1); color:#ff8a8a; }
-  .item.deleting { opacity:0.3; }
-  .empty { text-align:center; padding:40px 20px; color:#666; font-size:14px; background:#1a1a1f; border:1px dashed #2a2a30; border-radius:12px; }
-</style></head><body>
 
-<h1>Affiliate pool</h1>
-<div class="nav">
-  <a href="/admin/add?key=${encodeURIComponent(key)}">🖼 Photos</a>
-  <a class="active" href="/admin/affiliate?key=${encodeURIComponent(key)}">🛍 Affiliate</a>
-</div>
+  // Tabs + filter pills shown inline above the list
+  const content = `
+  <div class="aff-toolbar">
+    <div class="tabs">
+      <a class="tab" href="/admin/add?key=${encodeURIComponent(key)}">Photos</a>
+      <span class="tab active">Affiliate</span>
+    </div>
+    <div class="pills">
+      <span class="pill active"><span class="dot" style="color:#1ad482"></span>UNUSED (${counts.unused ?? 0})</span>
+      <span class="pill"><span class="dot" style="color:#7be88a"></span>APPROVED (${counts.approved ?? 0})</span>
+      <span class="pill"><span class="dot" style="color:#7da9ff"></span>POSTED (${counts.used ?? 0})</span>
+    </div>
+  </div>
 
-<div class="stats">
-  <span class="a">UNUSED <b>${counts.unused}</b></span>
-  <span>APPROVED <b>${counts.approved}</b></span>
-  <span>POSTED <b>${counts.used}</b></span>
-  ${(counts.other ?? 0) > 0 ? `<span>OTHER <b>${counts.other}</b></span>` : ''}
-</div>
+  <div class="aff-list">
+    ${products.length === 0 ? '<div class="empty-state">No products. Use the Chrome extension on affiliate.shopee.vn to save products.</div>' : itemsHtml}
+  </div>
+  `;
 
-<h2>Pool (${products.length} products)</h2>
-${products.length === 0 ? '<div class="empty">No products yet. Use the Chrome extension on affiliate.shopee.vn to save products.</div>' : rows}
-
-<script>
-const KEY = ${JSON.stringify(key)};
-document.querySelectorAll('button.del-btn').forEach((btn) => {
-  btn.addEventListener('click', async (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const id = btn.dataset.id;
-    if (!confirm('Delete product id=' + id + '?')) return;
-    const item = btn.closest('.item');
-    item.classList.add('deleting');
-    try {
-      const res = await fetch('/admin/affiliate/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
-      if (!res.ok) throw new Error(await res.text());
-      item.remove();
-    } catch (err) {
-      item.classList.remove('deleting');
-      alert('Delete failed: ' + err.message);
+  const extraStyle = `
+  <style>
+    .aff-toolbar { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:14px; flex-wrap:wrap; }
+    .aff-list { display:flex; flex-direction:column; gap:10px; }
+    .aff-row { display:grid; grid-template-columns:80px 1.6fr 1fr 1fr auto auto; gap:14px; align-items:center; background:#0f1115; border:1px solid #1a1c20; border-radius:12px; padding:12px 14px; transition:border-color 0.12s, opacity 0.2s; }
+    .aff-row:hover { border-color:#2a2c32; }
+    .aff-row.deleting { opacity:0.25; }
+    .aff-row > img { width:80px; height:80px; object-fit:cover; border-radius:9px; background:#0a0b0e; }
+    .aff-info { min-width:0; display:flex; flex-direction:column; gap:6px; }
+    .aff-title { font-size:14px; font-weight:600; line-height:1.35; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+    .col { min-width:0; }
+    .col-label { font-size:10px; font-weight:700; color:#888; text-transform:uppercase; letter-spacing:0.06em; }
+    .col-val { font-size:14px; font-weight:500; margin-top:2px; }
+    .shopee-btn { display:inline-flex; align-items:center; justify-content:center; padding:9px 14px; background:#13151a; border:1px solid #2a2c32; border-radius:9px; color:#9eb8ff; font-size:12.5px; text-decoration:none; transition:background 0.12s, border-color 0.12s; white-space:nowrap; }
+    .shopee-btn:hover { background:#191c22; border-color:#2f4170; color:#bcd0ff; }
+    .aff-del { width:32px; height:32px; padding:0; border:0; background:transparent; color:#666; border-radius:8px; cursor:pointer; font-size:14px; }
+    .aff-del:hover { background:rgba(255,138,138,0.12); color:#ff8a8a; }
+    .empty-state { text-align:center; padding:40px 20px; color:#666; font-size:13.5px; background:#0f1115; border:1px dashed #1f2127; border-radius:12px; }
+    @media (max-width: 980px) {
+      .aff-row { grid-template-columns:64px 1fr auto; }
+      .aff-row .col, .aff-row .shopee-btn { display:none; }
+      .aff-row > img { width:64px; height:64px; }
     }
+  </style>
+  `;
+
+  const bodyExtraScript = `
+  (() => {
+    const KEY = ${JSON.stringify(key)};
+    document.querySelectorAll('button.aff-del').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault(); e.stopPropagation();
+        const id = btn.dataset.id;
+        if (!confirm('Delete product id=' + id + '?')) return;
+        const row = btn.closest('.aff-row');
+        row.classList.add('deleting');
+        try {
+          const res = await fetch('/admin/affiliate/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
+          if (!res.ok) throw new Error(await res.text());
+          row.remove();
+        } catch (err) {
+          row.classList.remove('deleting');
+          alert('Delete failed: ' + err.message);
+        }
+      });
+    });
+    document.addEventListener('cv-add', () => {
+      alert('Affiliate products: open affiliate.shopee.vn and click 💾 CV in the Chrome extension.');
+    });
+  })();
+  `;
+
+  const pageActions = `
+    <div class="stat-tiles">
+      <div class="stat-tile active"><div class="stat-tile-label">UNUSED</div><div class="stat-tile-value">${counts.unused ?? 0}</div></div>
+      <div class="stat-tile"><div class="stat-tile-label">APPROVED</div><div class="stat-tile-value">${counts.approved ?? 0}</div></div>
+      <div class="stat-tile"><div class="stat-tile-label">POSTED</div><div class="stat-tile-value">${counts.used ?? 0}</div></div>
+    </div>`;
+
+  return renderLayout({
+    key,
+    currentPage: 'affiliate',
+    pageTitle: 'Affiliate Pool',
+    pageSubtitle: 'Shopee products saved via the Chrome extension.',
+    pageActions,
+    content: extraStyle + content,
+    searchPlaceholder: 'Search products...',
+    bodyExtraScript,
   });
-});
-</script>
-</body></html>`;
-};
+}
 
 function escapeHtml(s: string): string {
   return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
@@ -302,7 +337,7 @@ export async function handleAdminAffiliate(req: Request, env: Env): Promise<Resp
          LIMIT 50`,
     ).all<ProductRow>();
     return new Response(
-      STATUS_HTML(env.ADMIN_TOKEN, products.results ?? [], {
+      buildAffiliatePage(env.ADMIN_TOKEN, products.results ?? [], {
         unused: counts?.unused ?? 0,
         approved: counts?.approved ?? 0,
         used: counts?.used ?? 0,
