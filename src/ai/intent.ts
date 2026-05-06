@@ -16,11 +16,18 @@ const REPLY_SCHEMA = {
 };
 
 function buildPrompt(message: string, fromName?: string): string {
-  const name = fromName?.split(' ').slice(-1)[0] ?? 'bạn';
+  const fullName = (fromName ?? '').trim();
+  // Vietnamese given name = last word of full name. Single-word names ("Nam")
+  // → fullName === firstName.
+  const firstName = (fullName.split(' ').filter(Boolean).slice(-1)[0] || '').trim();
+  const namePresent = fullName.length > 0;
+
   return `You are the friendly social media assistant for "Cozy Vibe", a Vietnamese cozy home decor Facebook page.
 
 A user just commented on a post.
-First name: "${name}"
+${namePresent
+  ? `User's full name: "${fullName}"\nUser's first name (Vietnamese given name = last word): "${firstName}"`
+  : `User name: not provided`}
 Comment: """${message}"""
 
 Classify the comment + generate a SHORT, friendly Vietnamese reply.
@@ -33,10 +40,12 @@ Intents:
 - OTHER: tag a friend / vague / unclear. Reply: warm acknowledgement.
 
 Reply guidance:
-- Address by first name when natural ("${name} ơi", "Dạ ${name}")
 - Tone: warm, casual Vietnamese girl shop owner — NOT robotic
 - Length: 1 short sentence, max 15 words
 - 0-2 emojis allowed
+${namePresent
+  ? `- Address the user by their FIRST NAME ("${firstName}"). Examples: "${firstName} ơi, cảm ơn nha", "Dạ ${firstName}, shop inbox bạn nha", "Cảm ơn ${firstName} nhé". You may use the full name "${fullName}" once if it sounds natural; never address with empty/just "ơi".`
+  : `- Address the user as "bạn" (no name given). Examples: "Cảm ơn bạn nha", "Dạ bạn ơi, shop inbox riêng nha".`}
 - Do NOT mention specific products, prices, or commitments
 - Do NOT echo the comment text
 - For SPAM: reply_text MUST be empty string
@@ -64,8 +73,10 @@ export async function classifyAndReply(
   // Edge case: empty / 1-2 char (just emoji) → OTHER, skip API call
   if (trimmed.length === 0) return { intent: 'OTHER', reply_text: '' };
   if (trimmed.length <= 2) {
-    const name = fromName?.split(' ').slice(-1)[0] ?? 'bạn';
-    return { intent: 'PRAISE', reply_text: `Cảm ơn ${name} nha ❤️` };
+    const fullName = (fromName ?? '').trim();
+    const firstName = (fullName.split(' ').filter(Boolean).slice(-1)[0] || '').trim();
+    const addr = firstName || 'bạn';
+    return { intent: 'PRAISE', reply_text: `Cảm ơn ${addr} nha ❤️` };
   }
 
   const start = Date.now();

@@ -36,7 +36,10 @@ export async function runFunnel(
     .run();
 
   const fb = new FbClient(env);
-  const firstName = event.fromName?.split(' ').slice(-1)[0] ?? 'bạn';
+  // Vietnamese given name = last word; for single-word names like "Nam" the
+  // whole thing IS the first name. Empty/missing → 'bạn' (avoid " ơi" leading space).
+  const firstName =
+    (event.fromName ?? '').trim().split(/\s+/).filter(Boolean).slice(-1)[0] || 'bạn';
   // Templates stored in DB use literal '\n' chars (SQL doesn't unescape) — convert to real newlines.
   const dmBody = match.dm_template.replace('{name}', firstName).replace(/\\n/g, '\n');
   const publicText = (match.reply_public ?? '').replace(/\\n/g, '\n');
