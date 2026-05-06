@@ -29,6 +29,12 @@ FB_GRAPH_VERSION = "v21.0"
 GEMINI_MODEL = "gemini-2.5-flash-lite"
 LOG_LEVEL = "info"
 
+# Cloudflare Workers cron — way more reliable than GH Actions cron.
+# Fires every hour at minute 5. Worker checks D1 last-post times; if any
+# pipeline is overdue, dispatches the GH workflow via API.
+[triggers]
+crons = ["5 * * * *"]
+
 # Secrets are set via: wrangler secret put <NAME>
 # Required secrets:
 #   FB_APP_SECRET            — for webhook signature verification

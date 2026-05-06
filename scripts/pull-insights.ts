@@ -17,18 +17,21 @@ async function fbGet<T>(env: ScriptEnv, path: string): Promise<T> {
 }
 
 async function pullPageInsights(env: ScriptEnv) {
-  const metrics = [
-    'page_fans',
-    'page_fan_adds',
-    'page_fan_removes',
-    'page_impressions',
-    'page_post_engagements',
-  ].join(',');
+  // FB v21 deprecated many Page-level insights (page_impressions,
+  // page_fan_adds, page_post_engagements). Keep only metrics that still
+  // resolve. page_fans is the most reliable. Other engagement metrics
+  // shifted to per-post insights, not page-level.
+  const metrics = ['page_fans'].join(',');
 
-  const data = await fbGet<{ data: InsightItem[] }>(
-    env,
-    `/${env.FB_PAGE_ID}/insights?metric=${metrics}&period=day`,
-  );
+  let data: { data: InsightItem[] } = { data: [] };
+  try {
+    data = await fbGet<{ data: InsightItem[] }>(
+      env,
+      `/${env.FB_PAGE_ID}/insights?metric=${metrics}&period=day`,
+    );
+  } catch (err) {
+    console.warn('insights fetch failed, continuing with zeros:', String(err).slice(0, 200));
+  }
 
   const get = (name: string): number => {
     const item = data.data.find((d) => d.name === name);
