@@ -1,11 +1,25 @@
 import type { Env } from '@/lib/env';
 
-// Manually add image URLs from any source (Pinterest, IG, Xiaohongshu, etc.)
-// to the curated pool with status='APPROVED'.
+// Photos pool admin — paste image URLs from any source (Pinterest, IG, etc.)
+// + view all approved photos with posted/unused status + delete.
 //
 // Routes (require ?key=ADMIN_TOKEN):
-//   GET /admin/add        — HTML form
-//   POST /admin/add/url   — JSON { url, source?, alt? } → validate + insert
+//   GET    /admin/add        — HTML page (form + list)
+//   POST   /admin/add/url    — JSON, add image to pool
+//   DELETE /admin/add/:id    — remove a photo
+
+interface PhotoRow {
+  id: number;
+  source: string;
+  image_url: string;
+  thumb_url: string | null;
+  alt: string | null;
+  set_id: string | null;
+  set_order: number;
+  used_count: number;
+  last_used_at: number | null;
+  inserted_at: number;
+}
 
 function checkAuth(url: URL, env: Env): boolean {
   const key = url.searchParams.get('key');
@@ -16,149 +30,248 @@ function unauthorized(): Response {
   return new Response('Unauthorized', { status: 401 });
 }
 
-const ADD_HTML = (key: string) => `<!doctype html>
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
+}
+
+const PAGE_HTML = (key: string, photos: PhotoRow[], counts: Record<string, number>) => {
+  const groups = new Map<string, PhotoRow[]>();
+  for (const p of photos) {
+    const k = p.set_id || `singleton-${p.id}`;
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k)!.push(p);
+  }
+
+  const setsHtml = [...groups.entries()]
+    .map(([, items]) => {
+      const used = items.some((i) => i.used_count > 0);
+      const lastUsed = items.find((i) => i.last_used_at)?.last_used_at;
+      const badge = used
+        ? `<span class="badge ok" title="${lastUsed ? new Date(lastUsed * 1000).toLocaleString() : ''}">✅ Posted</span>`
+        : `<span class="badge gray">○ Unused</span>`;
+      const sortedItems = [...items].sort((a, b) => (a.set_order ?? 0) - (b.set_order ?? 0));
+      const tiles = sortedItems
+        .map(
+          (p) => `
+        <div class="tile" data-id="${p.id}">
+          <img src="${escapeHtml(p.thumb_url ?? p.image_url)}" loading="lazy" alt="">
+          <button class="del-btn" data-id="${p.id}" title="Remove from pool">✕</button>
+        </div>`,
+        )
+        .join('');
+      const setLabel = items.length > 1 ? `Set of ${items.length} · ` : '';
+      const dateLabel = items[0]?.inserted_at
+        ? new Date(items[0].inserted_at * 1000).toLocaleDateString('vi-VN')
+        : '';
+      return `
+      <div class="set">
+        <div class="set-header">
+          <div class="set-meta">${badge} <span class="muted">${setLabel}${escapeHtml(items[0]?.source ?? '')} · ${dateLabel}</span></div>
+        </div>
+        <div class="tiles">${tiles}</div>
+      </div>`;
+    })
+    .join('');
+
+  return `<!doctype html>
 <html lang="vi"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Add photo URL</title>
+<title>Photos pool</title>
 <style>
   * { box-sizing: border-box; }
-  html, body { margin:0; background:#111; color:#eee; font-family:system-ui,-apple-system,sans-serif; }
-  body { min-height:100vh; padding:14px; padding-bottom:env(safe-area-inset-bottom); max-width:560px; margin:0 auto; }
-  h1 { font-size:20px; margin:0 0 8px; }
-  .nav a { color:#79b8ff; font-size:13px; margin-right:14px; }
-  .stats { display:flex; gap:10px; font-size:13px; margin:10px 0 14px; opacity:.85; flex-wrap:wrap; }
-  .stats span { padding:4px 10px; border-radius:6px; background:#222; }
-  textarea, input { width:100%; background:#1c1c1c; border:1px solid #333; color:#eee; padding:12px; border-radius:8px; font-size:15px; font-family:ui-monospace,Menlo,monospace; }
-  textarea { min-height:120px; resize:vertical; }
+  html, body { margin:0; background:#0e0e10; color:#eaeaea; font-family:-apple-system,system-ui,"Segoe UI",sans-serif; }
+  body { min-height:100vh; padding:20px 16px 60px; max-width:880px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; font-weight:700; letter-spacing:-0.01em; }
+  .nav { display:flex; gap:6px; margin:8px 0 18px; flex-wrap:wrap; }
+  .nav a { color:#9eb8ff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:8px; background:#1c1c20; border:1px solid #2a2a30; }
+  .nav a.active { background:#2d2d35; color:#fff; border-color:#3a3a44; }
+  .nav a:hover { background:#26262c; }
+  .stats { display:flex; gap:8px; margin:14px 0 22px; flex-wrap:wrap; }
+  .stats span { padding:6px 12px; border-radius:999px; background:#1c1c20; font-size:12px; border:1px solid #2a2a30; }
+  .stats b { color:#fff; font-weight:600; }
+  .stats .a { color:#7be88a; }
+  .stats .r { color:#ff8a8a; }
+
+  /* form card */
+  .card { background:#1a1a1f; border:1px solid #2a2a30; border-radius:14px; padding:18px; margin-bottom:24px; }
+  .label { font-size:12px; color:#999; text-transform:uppercase; letter-spacing:0.05em; margin:14px 0 6px; font-weight:600; }
+  .label:first-child { margin-top:0; }
+  textarea, input { width:100%; background:#101013; border:1px solid #2a2a30; color:#eaeaea; padding:11px 13px; border-radius:9px; font-size:14px; font-family:ui-monospace,Menlo,monospace; transition:border-color 0.15s; }
+  textarea { min-height:110px; resize:vertical; }
   input { font-family:inherit; }
-  .label { font-size:13px; color:#aaa; margin:14px 0 6px; }
-  button { width:100%; padding:14px; border:0; border-radius:8px; font-size:15px; font-weight:600; background:#3ae07f; color:#000; cursor:pointer; margin-top:10px; }
-  button:disabled { opacity:.5; cursor:wait; }
-  .result { margin-top:14px; padding:10px 12px; border-radius:8px; font-size:14px; word-break:break-all; }
-  .ok { background:#1f3a26; border:1px solid #2a5a36; }
-  .err { background:#3a1f1f; border:1px solid #5a2a2a; }
-  .preview { margin-top:10px; max-width:100%; border-radius:8px; max-height:240px; object-fit:cover; }
-  .hint { font-size:12px; color:#888; margin-top:8px; line-height:1.5; }
-  kbd { background:#333; padding:1px 5px; border-radius:3px; font-family:ui-monospace,Menlo,monospace; font-size:11px; }
+  textarea:focus, input:focus { outline:none; border-color:#5a8dff; }
+  button.primary { width:100%; padding:13px; border:0; border-radius:9px; font-size:14px; font-weight:600; background:linear-gradient(180deg,#3ae07f,#2ec968); color:#001a0a; cursor:pointer; margin-top:14px; transition:transform 0.05s; }
+  button.primary:hover { transform:translateY(-1px); }
+  button.primary:disabled { opacity:.5; cursor:wait; transform:none; }
+  .hint { font-size:12px; color:#888; margin-top:8px; line-height:1.55; }
+  kbd { background:#26262c; padding:1px 6px; border-radius:4px; font-family:ui-monospace,Menlo,monospace; font-size:11px; color:#bbb; }
+
+  .result { margin-top:12px; padding:9px 12px; border-radius:8px; font-size:13px; word-break:break-all; line-height:1.5; }
+  .ok { background:rgba(58,224,127,0.1); border:1px solid rgba(58,224,127,0.3); color:#7be88a; }
+  .err { background:rgba(255,138,138,0.1); border:1px solid rgba(255,138,138,0.3); color:#ff8a8a; }
+
+  /* sets list */
+  h2 { font-size:15px; margin:24px 0 12px; color:#aaa; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
+  .set { background:#1a1a1f; border:1px solid #2a2a30; border-radius:12px; padding:12px; margin-bottom:10px; }
+  .set-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:0 2px; }
+  .set-meta { display:flex; gap:8px; align-items:center; flex-wrap:wrap; font-size:12px; }
+  .muted { color:#888; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+  .badge.ok { background:rgba(58,224,127,0.15); color:#7be88a; }
+  .badge.gray { background:#26262c; color:#aaa; }
+  .badge.red { background:rgba(255,138,138,0.15); color:#ff8a8a; }
+
+  .tiles { display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px; }
+  .tile { position:relative; aspect-ratio:1/1; border-radius:8px; overflow:hidden; background:#0a0a0c; }
+  .tile img { width:100%; height:100%; object-fit:cover; display:block; }
+  .tile .del-btn { position:absolute; top:6px; right:6px; width:24px; height:24px; padding:0; border:0; border-radius:50%; background:rgba(0,0,0,0.7); color:#ff8a8a; cursor:pointer; font-size:13px; line-height:24px; opacity:0; transition:opacity 0.15s, background 0.15s; }
+  .tile:hover .del-btn { opacity:1; }
+  .tile .del-btn:hover { background:rgba(255,138,138,0.2); }
+  .tile.deleting { opacity:0.3; transform:scale(0.95); transition:opacity 0.2s, transform 0.2s; }
+
+  .empty { text-align:center; padding:40px 20px; color:#666; font-size:14px; background:#1a1a1f; border:1px dashed #2a2a30; border-radius:12px; }
 </style>
 </head><body>
-<h1>Add photo URL</h1>
+
+<h1>Photos pool</h1>
 <div class="nav">
-  <a href="/admin/curate?key=${encodeURIComponent(key)}">← Review pending</a>
+  <a class="active" href="/admin/add?key=${encodeURIComponent(key)}">🖼 Photos</a>
+  <a href="/admin/affiliate?key=${encodeURIComponent(key)}">🛍 Affiliate</a>
 </div>
-<div class="stats" id="stats">…</div>
 
-<div class="label">Image URLs — one per line. <b>Each submit = 1 SET = 1 FB post.</b></div>
-<textarea id="urls" placeholder="https://i.pinimg.com/photo-of-room-wide-shot.jpg&#10;https://i.pinimg.com/photo-of-same-room-close-up.jpg&#10;https://i.pinimg.com/photo-of-same-room-detail.jpg"></textarea>
-<div class="hint" style="margin-top:6px">Pin 2-3 ảnh CÙNG 1 phòng (góc khác nhau) → paste cả 3 cùng lần để chúng được nhóm vào 1 set. Daily cron sẽ pick từng set → mỗi post là 1 set coherent.</div>
-
-<div class="label">Source label <span style="opacity:.5">(optional, e.g. pinterest, instagram, xhs)</span></div>
-<input id="source" type="text" placeholder="pinterest" value="pinterest">
-
-<div class="label">Alt text <span style="opacity:.5">(optional, used by Gemini for caption)</span></div>
-<input id="alt" type="text" placeholder="cozy bedroom warm light plants">
-
-<button id="submit">Add to pool (APPROVED)</button>
-
-<div id="result"></div>
-
-<div class="hint">
-  <b>Pinterest</b>: open pin → right-click image → Copy Image Address. URL like <kbd>https://i.pinimg.com/...jpg</kbd><br>
-  <b>Instagram</b>: open post in browser → right-click image → Copy Image Address.<br>
-  <b>Xiaohongshu (xiaohongshu.com)</b>: open note → right-click → Copy Image Address.<br>
-  Multiple URLs: paste one per line, all added in one click.
+<div class="stats">
+  <span class="a">UNUSED <b>${counts.unusedSets}</b> sets</span>
+  <span>APPROVED <b>${counts.approved}</b> photos</span>
+  <span>POSTED <b>${counts.posted}</b> photos</span>
 </div>
+
+<div class="card">
+  <div class="label">Image URLs — one per line. <b style="color:#fff">Each submit = 1 SET = 1 FB post</b></div>
+  <textarea id="urls" placeholder="https://i.pinimg.com/photo-of-room.jpg&#10;https://i.pinimg.com/same-room-detail.jpg"></textarea>
+  <div class="hint">Pin 2-3 ảnh CÙNG 1 phòng → paste cùng lần để thành 1 set. Cron sẽ pick từng set → mỗi post là 1 carousel coherent.</div>
+
+  <div class="label">Source <span class="muted">(optional)</span></div>
+  <input id="source" type="text" placeholder="pinterest" value="pinterest">
+
+  <div class="label">Alt text <span class="muted">(optional, used by Gemini for caption)</span></div>
+  <input id="alt" type="text" placeholder="cozy bedroom warm light plants">
+
+  <button id="submit" class="primary">Add to pool</button>
+  <div id="result"></div>
+</div>
+
+<h2>Pool (${photos.length} photos)</h2>
+${photos.length === 0 ? '<div class="empty">Pool is empty. Paste image URLs above to start.</div>' : setsHtml}
 
 <script>
 (() => {
   const KEY = ${JSON.stringify(key)};
   const $ = (id) => document.getElementById(id);
-  const $stats = $('stats'), $result = $('result'), $btn = $('submit');
-
-  async function refreshStats() {
-    try {
-      const res = await fetch('/admin/curate/next?key=' + encodeURIComponent(KEY));
-      const data = await res.json();
-      $stats.innerHTML = ''
-        + '<span>PENDING: <b>' + data.counts.pending + '</b></span>'
-        + '<span style="color:#7be88a">APPROVED: <b>' + data.counts.approved + '</b></span>'
-        + '<span style="color:#ff8a8a">REJECTED: <b>' + data.counts.rejected + '</b></span>';
-    } catch {}
-  }
 
   async function add() {
+    const $btn = $('submit'), $result = $('result');
     const urls = $('urls').value.split(/\\s+/).map(s => s.trim()).filter(Boolean);
     if (urls.length === 0) { alert('Paste at least one URL'); return; }
     const source = $('source').value.trim() || 'manual';
     const alt = $('alt').value.trim();
-    // All URLs in this submit share one set_id = one FB carousel post
     const setId = 'set-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2, 8);
     $btn.disabled = true;
     $result.innerHTML = '';
-    const lines = [];
     let ok = 0, fail = 0;
+    const lines = [];
     for (let i = 0; i < urls.length; i++) {
-      const url = urls[i];
       try {
         const res = await fetch('/admin/add/url?key=' + encodeURIComponent(KEY), {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url, source, alt, set_id: setId, set_order: i }),
+          body: JSON.stringify({ url: urls[i], source, alt, set_id: setId, set_order: i }),
         });
         const data = await res.json();
-        if (res.ok) {
-          ok++;
-          lines.push('<div class="result ok">✓ ' + (data.duplicate ? 'already in pool: ' : 'added id=' + data.id + ': ') + url + '</div>');
-        } else {
-          fail++;
-          lines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + url + '</div>');
-        }
+        if (res.ok) { ok++; lines.push('<div class="result ok">✓ ' + (data.duplicate ? 'already in pool: ' : 'added id=' + data.id + ': ') + urls[i] + '</div>'); }
+        else { fail++; lines.push('<div class="result err">✗ ' + (data.error || res.status) + ': ' + urls[i] + '</div>'); }
       } catch (err) {
-        fail++;
-        lines.push('<div class="result err">✗ ' + err.message + ': ' + url + '</div>');
+        fail++; lines.push('<div class="result err">✗ ' + err.message + ': ' + urls[i] + '</div>');
       }
     }
-    const setSummary = ok > 0 ? ' as 1 set (' + ok + ' photos = 1 FB post)' : '';
-    $result.innerHTML = lines.join('') + '<div class="hint" style="margin-top:14px">Done: ' + ok + ' added' + setSummary + ', ' + fail + ' failed.</div>';
+    $result.innerHTML = lines.join('') + '<div class="hint" style="margin-top:10px">Done: ' + ok + ' added' + (ok > 1 ? ' as 1 set of ' + ok : '') + ', ' + fail + ' failed.</div>';
     if (ok > 0) {
       $('urls').value = '';
       $('alt').value = '';
+      setTimeout(() => location.reload(), 800);
     }
     $btn.disabled = false;
-    refreshStats();
   }
+  $('submit').addEventListener('click', add);
 
-  $btn.addEventListener('click', add);
-  refreshStats();
+  document.querySelectorAll('button.del-btn').forEach((btn) => {
+    btn.addEventListener('click', async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const id = btn.dataset.id;
+      if (!confirm('Delete photo id=' + id + '?')) return;
+      const tile = btn.closest('.tile');
+      tile.classList.add('deleting');
+      try {
+        const res = await fetch('/admin/add/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
+        if (!res.ok) throw new Error(await res.text());
+        tile.remove();
+      } catch (err) {
+        tile.classList.remove('deleting');
+        alert('Delete failed: ' + err.message);
+      }
+    });
+  });
 })();
 </script>
 </body></html>`;
+};
 
 export async function handleAdminAdd(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   if (!checkAuth(url, env)) return unauthorized();
   const sub = url.pathname.replace(/^\/admin\/add/, '') || '/';
 
+  // GET / — list page with form
   if (req.method === 'GET' && sub === '/') {
-    return new Response(ADD_HTML(env.ADMIN_TOKEN), {
-      headers: { 'Content-Type': 'text/html; charset=utf-8' },
-    });
+    const photosResult = await env.DB.prepare(
+      `SELECT id, source, image_url, thumb_url, alt, set_id, set_order, used_count, last_used_at, inserted_at
+         FROM curated_photos
+        WHERE status = 'APPROVED'
+        ORDER BY inserted_at DESC, set_id, set_order ASC
+        LIMIT 200`,
+    ).all<PhotoRow>();
+
+    const counts = await env.DB.prepare(
+      `SELECT
+         COUNT(*) AS approved,
+         SUM(CASE WHEN used_count > 0 THEN 1 ELSE 0 END) AS posted,
+         COUNT(DISTINCT CASE WHEN last_used_at IS NULL THEN set_id END) AS unused_sets
+       FROM curated_photos WHERE status='APPROVED'`,
+    ).first<{ approved: number | null; posted: number | null; unused_sets: number | null }>();
+
+    return new Response(
+      PAGE_HTML(env.ADMIN_TOKEN, photosResult.results ?? [], {
+        approved: counts?.approved ?? 0,
+        posted: counts?.posted ?? 0,
+        unusedSets: counts?.unused_sets ?? 0,
+      }),
+      { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+    );
   }
 
+  // POST /url — add image
   if (req.method === 'POST' && sub === '/url') {
     const body = await req.json<{ url?: string; source?: string; alt?: string; set_id?: string; set_order?: number }>();
     const photoUrl = body.url?.trim();
     if (!photoUrl || !/^https?:\/\//i.test(photoUrl)) {
       return Response.json({ error: 'invalid url' }, { status: 400 });
     }
-    // Probe URL to ensure it's an image and reachable
     let contentType = '';
     let contentLength = 0;
     try {
       const headRes = await fetch(photoUrl, { method: 'HEAD' });
       if (!headRes.ok) {
-        // Some CDNs (Pinterest's i.pinimg) block HEAD; fall back to ranged GET
         const rangeRes = await fetch(photoUrl, { headers: { Range: 'bytes=0-1023' } });
         if (!rangeRes.ok) return Response.json({ error: `unreachable (${rangeRes.status})` }, { status: 400 });
         contentType = rangeRes.headers.get('content-type') ?? '';
@@ -202,6 +315,14 @@ export async function handleAdminAdd(req: Request, env: Env): Promise<Response> 
       .first<{ id: number }>();
 
     return Response.json({ ok: true, id: result?.id, set_id: setId, set_order: setOrder, source, content_type: contentType });
+  }
+
+  // DELETE /:id
+  const deleteMatch = sub.match(/^\/(\d+)$/);
+  if (req.method === 'DELETE' && deleteMatch) {
+    const id = Number(deleteMatch[1]);
+    const r = await env.DB.prepare(`DELETE FROM curated_photos WHERE id = ?`).bind(id).run();
+    return Response.json({ ok: true, changes: r.meta.changes ?? 0 });
   }
 
   return new Response('not found', { status: 404 });

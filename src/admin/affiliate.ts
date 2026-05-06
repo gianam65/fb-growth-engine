@@ -49,17 +49,15 @@ const STATUS_HTML = (key: string, products: ProductRow[], counts: Record<string,
         : `<span class="badge gray">○ Unused</span>`;
       const statusBadge = p.status !== 'APPROVED' ? `<span class="badge red">${p.status}</span>` : '';
       return `
-      <tr data-id="${p.id}">
-        <td><img src="${p.image_url ?? ''}" alt=""></td>
-        <td>
+      <div class="item" data-id="${p.id}">
+        <img src="${escapeHtml(p.image_url ?? '')}" loading="lazy" alt="">
+        <div class="item-body">
           <div class="title">${escapeHtml(p.title ?? '(no title)')}</div>
-          <div class="meta">${usedBadge} ${statusBadge} ${escapeHtml(p.price ?? '')}</div>
-          <div class="link"><a href="${p.affiliate_url}" target="_blank" rel="noopener">${p.affiliate_url}</a></div>
-        </td>
-        <td class="actions">
-          <button class="del" data-id="${p.id}" title="Delete">🗑</button>
-        </td>
-      </tr>`;
+          <div class="meta">${usedBadge} ${statusBadge} ${p.price ? `<span class="muted">${escapeHtml(p.price)}</span>` : ''}</div>
+          <a class="link" href="${escapeHtml(p.affiliate_url)}" target="_blank" rel="noopener">${escapeHtml(p.affiliate_url)}</a>
+        </div>
+        <button class="del-btn" data-id="${p.id}" title="Remove">✕</button>
+      </div>`;
     })
     .join('');
   return `<!doctype html>
@@ -67,53 +65,69 @@ const STATUS_HTML = (key: string, products: ProductRow[], counts: Record<string,
 <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Affiliate pool</title>
 <style>
-  body { font-family: system-ui,-apple-system,sans-serif; max-width:820px; margin:30px auto; padding:0 16px; color:#222; }
-  h1 { font-size:22px; margin:0 0 8px; }
-  .stats { display:flex; gap:10px; margin:14px 0; flex-wrap:wrap; }
-  .stats span { padding:5px 10px; border-radius:6px; background:#eee; font-size:13px; }
-  table { width:100%; border-collapse:collapse; }
-  td { vertical-align:top; padding:10px 6px; border-bottom:1px solid #eee; font-size:13px; }
-  td:first-child { width:80px; }
-  td.actions { width:48px; text-align:right; }
-  img { width:72px; height:72px; object-fit:cover; border-radius:6px; background:#f0f0f0; }
-  .title { font-weight:600; font-size:14px; margin-bottom:4px; }
-  .meta { color:#888; font-size:12px; margin-bottom:4px; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
-  .link a { color:#79b8ff; word-break:break-all; }
-  .nav a { color:#79b8ff; margin-right:14px; font-size:13px; }
-  .badge { display:inline-block; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; }
-  .badge.ok { background:#d4f5dd; color:#1a7f3a; }
-  .badge.gray { background:#eee; color:#666; }
-  .badge.red { background:#fdeaea; color:#b32d2d; }
-  button.del { background:transparent; border:0; cursor:pointer; font-size:16px; padding:6px 8px; border-radius:6px; }
-  button.del:hover { background:#fdeaea; }
-  tr.deleting { opacity:0.4; }
+  * { box-sizing: border-box; }
+  html, body { margin:0; background:#0e0e10; color:#eaeaea; font-family:-apple-system,system-ui,"Segoe UI",sans-serif; }
+  body { min-height:100vh; padding:20px 16px 60px; max-width:880px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 4px; font-weight:700; letter-spacing:-0.01em; }
+  .nav { display:flex; gap:6px; margin:8px 0 18px; flex-wrap:wrap; }
+  .nav a { color:#9eb8ff; text-decoration:none; font-size:13px; padding:6px 12px; border-radius:8px; background:#1c1c20; border:1px solid #2a2a30; }
+  .nav a.active { background:#2d2d35; color:#fff; border-color:#3a3a44; }
+  .nav a:hover { background:#26262c; }
+  .stats { display:flex; gap:8px; margin:14px 0 22px; flex-wrap:wrap; }
+  .stats span { padding:6px 12px; border-radius:999px; background:#1c1c20; font-size:12px; border:1px solid #2a2a30; }
+  .stats b { color:#fff; font-weight:600; }
+  .stats .a { color:#7be88a; }
+  h2 { font-size:15px; margin:24px 0 12px; color:#aaa; font-weight:600; text-transform:uppercase; letter-spacing:0.05em; }
+  .item { display:flex; gap:12px; align-items:center; background:#1a1a1f; border:1px solid #2a2a30; border-radius:12px; padding:10px 12px; margin-bottom:8px; position:relative; transition:opacity 0.2s; }
+  .item img { width:64px; height:64px; object-fit:cover; border-radius:8px; background:#0a0a0c; flex-shrink:0; }
+  .item-body { flex:1; min-width:0; }
+  .title { font-weight:600; font-size:14px; margin-bottom:4px; line-height:1.35; overflow:hidden; text-overflow:ellipsis; display:-webkit-box; -webkit-line-clamp:1; -webkit-box-orient:vertical; }
+  .meta { font-size:12px; margin:4px 0; display:flex; gap:6px; flex-wrap:wrap; align-items:center; }
+  .muted { color:#888; }
+  .link { color:#9eb8ff; font-size:11px; text-decoration:none; word-break:break-all; opacity:0.7; }
+  .link:hover { opacity:1; }
+  .badge { display:inline-block; padding:3px 10px; border-radius:999px; font-size:11px; font-weight:600; }
+  .badge.ok { background:rgba(58,224,127,0.15); color:#7be88a; }
+  .badge.gray { background:#26262c; color:#aaa; }
+  .badge.red { background:rgba(255,138,138,0.15); color:#ff8a8a; }
+  button.del-btn { position:absolute; top:10px; right:10px; width:28px; height:28px; padding:0; border:0; border-radius:50%; background:transparent; color:#666; cursor:pointer; font-size:14px; transition:background 0.15s, color 0.15s; flex-shrink:0; }
+  button.del-btn:hover { background:rgba(255,138,138,0.1); color:#ff8a8a; }
+  .item.deleting { opacity:0.3; }
+  .empty { text-align:center; padding:40px 20px; color:#666; font-size:14px; background:#1a1a1f; border:1px dashed #2a2a30; border-radius:12px; }
 </style></head><body>
+
 <h1>Affiliate pool</h1>
 <div class="nav">
-  <a href="/admin/curate?key=${encodeURIComponent(key)}">Curate photos</a>
-  <a href="/admin/add?key=${encodeURIComponent(key)}">Add photo URL</a>
+  <a href="/admin/add?key=${encodeURIComponent(key)}">🖼 Photos</a>
+  <a class="active" href="/admin/affiliate?key=${encodeURIComponent(key)}">🛍 Affiliate</a>
 </div>
+
 <div class="stats">
-  <span>APPROVED unused: <b>${counts.unused}</b></span>
-  <span>APPROVED total: <b>${counts.approved}</b></span>
-  <span>USED (posted): <b>${counts.used}</b></span>
-  <span>OTHER: <b>${counts.other}</b></span>
+  <span class="a">UNUSED <b>${counts.unused}</b></span>
+  <span>APPROVED <b>${counts.approved}</b></span>
+  <span>POSTED <b>${counts.used}</b></span>
+  ${(counts.other ?? 0) > 0 ? `<span>OTHER <b>${counts.other}</b></span>` : ''}
 </div>
-${products.length === 0 ? '<p>No products yet. Use the Chrome extension to save products from affiliate.shopee.vn.</p>' : '<table>' + rows + '</table>'}
+
+<h2>Pool (${products.length} products)</h2>
+${products.length === 0 ? '<div class="empty">No products yet. Use the Chrome extension on affiliate.shopee.vn to save products.</div>' : rows}
+
 <script>
 const KEY = ${JSON.stringify(key)};
-document.querySelectorAll('button.del').forEach((btn) => {
-  btn.addEventListener('click', async () => {
+document.querySelectorAll('button.del-btn').forEach((btn) => {
+  btn.addEventListener('click', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
     const id = btn.dataset.id;
     if (!confirm('Delete product id=' + id + '?')) return;
-    const tr = btn.closest('tr');
-    tr.classList.add('deleting');
+    const item = btn.closest('.item');
+    item.classList.add('deleting');
     try {
       const res = await fetch('/admin/affiliate/' + id + '?key=' + encodeURIComponent(KEY), { method: 'DELETE' });
       if (!res.ok) throw new Error(await res.text());
-      tr.remove();
+      item.remove();
     } catch (err) {
-      tr.classList.remove('deleting');
+      item.classList.remove('deleting');
       alert('Delete failed: ' + err.message);
     }
   });
