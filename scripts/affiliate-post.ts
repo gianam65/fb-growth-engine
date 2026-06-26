@@ -72,22 +72,94 @@ async function geminiText(env: ScriptEnv, prompt: string, schema: object): Promi
       responseSchema: schema,
     },
   };
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`Gemini ${res.status}: ${text}`);
-  const json = JSON.parse(text) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
-  const out = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
-  if (!out) throw new Error(`Gemini empty: ${text}`);
-  return out;
+
+  // Gemini returns transient 503 (UNAVAILABLE) / 429 (rate limit) under load.
+  // Retry these with exponential backoff so one blip doesn't fail the job.
+  const MAX_ATTEMPTS = 5;
+  let lastErr = '';
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const text = await res.text();
+
+    if (res.ok) {
+      const json = JSON.parse(text) as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
+      const out = json.candidates?.[0]?.content?.parts?.[0]?.text ?? '';
+      if (!out) throw new Error(`Gemini empty: ${text}`);
+      return out;
+    }
+
+    lastErr = `Gemini ${res.status}: ${text}`;
+    const retryable = res.status === 429 || res.status >= 500;
+    if (!retryable || attempt === MAX_ATTEMPTS) throw new Error(lastErr);
+
+    const delayMs = 2000 * 2 ** (attempt - 1); // 2s, 4s, 8s, 16s
+    console.log(`  Gemini ${res.status} — retry ${attempt}/${MAX_ATTEMPTS - 1} in ${delayMs}ms`);
+    await new Promise((r) => setTimeout(r, delayMs));
+  }
+  throw new Error(lastErr);
+}
+
+// Last-resort caption when Gemini is fully unavailable (sustained free-tier
+// 503). Builds a short caption from the product title so the post still goes
+// out and the claimed product isn't wasted. Lower quality than Gemini, but a
+// published post beats a stuck product.
+function fallbackCaption(title: string | null): CaptionSpec {
+  // Shopee titles are long/messy — cut at the first separator and trim to a
+  // reasonable length to approximate the product name.
+  const raw = (title ?? 'Đồ decor nhà xinh').split(/[–\-|,]/)[0]!.trim();
+  const name = raw.length > 50 ? raw.slice(0, 50).trim() : raw;
+  return {
+    caption: `${name} xinh quá ạ`,
+    hashtags: '#cozyvibe #nhaxinh #decor #shopeefinds #dohomedecor',
+  };
+}
+
+// We publish to FB and capture TWO ids:
+//   mediaId    = photo_id / video_id — used to attach the affiliate URL as
+//                the first comment via /{mediaId}/comments (photos return
+//                400 if you call /comments on the page_post_id format).
+//   wallPostId = pageId_postId — what the comment webhook gives us when a
+//                user comments on the feed post. Used to look up which
+//                product the comment is on.
+interface PublishResult {
+  mediaId: string;
+  wallPostId: string | null;
+}
+
+// Always store wall_post_id in "pageId_postId" form. FB sometimes returns
+// the post_id field with the page prefix already, sometimes just the suffix.
+// Webhook events always use the full form, so we normalize at write time.
+function normalizeWallPostId(raw: string, pageId: string): string {
+  if (raw.includes('_')) return raw;
+  return `${pageId}_${raw}`;
+}
+
+// Resolve the wall post_id for a given media id (photo_id or video_id).
+// /{media_id}?fields=post_id returns the wall post id that surfaces the
+// media in feed (with format inconsistency — see normalizeWallPostId).
+async function lookupWallPostId(env: ScriptEnv, mediaId: string): Promise<string | null> {
+  try {
+    const url = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}/${mediaId}?fields=post_id&access_token=${env.FB_PAGE_ACCESS_TOKEN}`;
+    const res = await fetch(url);
+    if (!res.ok) {
+      console.warn(`  lookupWallPostId ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      return null;
+    }
+    const json = JSON.parse(await res.text()) as { post_id?: string };
+    return json.post_id ? normalizeWallPostId(json.post_id, env.FB_PAGE_ID) : null;
+  } catch (err) {
+    console.warn('  lookupWallPostId failed:', String(err).slice(0, 200));
+    return null;
+  }
 }
 
 // ----------- FB Reels (file_url upload) -----------
 
-async function publishReel(env: ScriptEnv, videoUrl: string, description: string): Promise<string> {
+async function publishReel(env: ScriptEnv, videoUrl: string, description: string): Promise<PublishResult> {
   const base = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}`;
 
   // Phase 1: start
@@ -130,12 +202,20 @@ async function publishReel(env: ScriptEnv, videoUrl: string, description: string
   });
   const finText = await finRes.text();
   if (!finRes.ok) throw new Error(`Reels finish ${finRes.status}: ${finText.slice(0, 400)}`);
-  return video_id;
+
+  // FB needs a moment to associate the video with a wall post after finish.
+  // Brief poll: try every 2s for up to 12s.
+  let wallPostId: string | null = null;
+  for (let i = 0; i < 6 && !wallPostId; i++) {
+    await new Promise((r) => setTimeout(r, 2000));
+    wallPostId = await lookupWallPostId(env, video_id);
+  }
+  return { mediaId: video_id, wallPostId };
 }
 
 // ----------- FB single-photo post (url-based) -----------
 
-async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption: string): Promise<string> {
+async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption: string): Promise<PublishResult> {
   const base = `https://graph.facebook.com/${env.FB_GRAPH_VERSION}`;
   const params = new URLSearchParams();
   params.set('url', imageUrl);
@@ -149,10 +229,11 @@ async function publishSinglePhotoPost(env: ScriptEnv, imageUrl: string, caption:
   const text = await res.text();
   if (!res.ok) throw new Error(`Photo post ${res.status}: ${text.slice(0, 400)}`);
   const json = JSON.parse(text) as { post_id?: string; id?: string };
-  // Prefer photo `id` (always supports /comments). The page_post_id
-  // (json.post_id) sometimes returns 400 "does not support" when used
-  // directly as comments target.
-  return json.id ?? json.post_id ?? 'unknown';
+  const mediaId = json.id ?? json.post_id ?? 'unknown';
+  // /photos returns BOTH ids on the same response — capture wall post id
+  // directly, no extra Graph call needed. Normalize to full pageId_postId.
+  const wallPostId = json.post_id ? normalizeWallPostId(json.post_id, env.FB_PAGE_ID) : null;
+  return { mediaId, wallPostId };
 }
 
 // ----------- FB comment on own post -----------
@@ -227,8 +308,18 @@ async function main() {
   console.log(`  kind: ${kind}`);
 
   console.log('[2/4] Gemini caption…');
-  const captionRaw = await geminiText(env, captionPrompt(row.title, kind), CAPTION_SCHEMA);
-  const captionSpec = JSON.parse(captionRaw) as CaptionSpec;
+  let captionSpec: CaptionSpec;
+  try {
+    const captionRaw = await geminiText(env, captionPrompt(row.title, kind), CAPTION_SCHEMA);
+    captionSpec = JSON.parse(captionRaw) as CaptionSpec;
+  } catch (err) {
+    // Gemini fully unavailable even after retries (sustained free-tier 503).
+    // Don't fail the job — the product is already claimed. Fall back to a
+    // template caption so the post still publishes; alert so we can review.
+    captionSpec = fallbackCaption(row.title);
+    console.warn(`  Gemini failed — using fallback caption: ${String(err).slice(0, 160)}`);
+    await tgSend(env, `⚠️ Gemini down — đăng với fallback caption (id=${row.id})\n${row.title?.slice(0, 80) ?? row.affiliate_url}\n${captionSpec.caption}`);
+  }
   console.log(`  caption: ${captionSpec.caption}`);
   console.log(`  hashtags: ${captionSpec.hashtags}`);
 
@@ -239,13 +330,13 @@ async function main() {
   const message = `✨ ${captionSpec.caption}\n\n${captionSpec.hashtags}`;
 
   console.log(`[3/4] Publishing ${kind}…`);
-  let fbPostId: string;
+  let publishResult: PublishResult;
   let postedKind: 'reels' | 'photo' = kind;
   try {
     if (kind === 'reels') {
-      fbPostId = await publishReel(env, row.video_url!, message);
+      publishResult = await publishReel(env, row.video_url!, message);
     } else {
-      fbPostId = await publishSinglePhotoPost(env, images[0]!, message);
+      publishResult = await publishSinglePhotoPost(env, images[0]!, message);
     }
   } catch (err) {
     // If Reels failed (video format issue, FB limit, etc.) and we have images, fall back.
@@ -253,7 +344,7 @@ async function main() {
       console.warn(`  Reels failed: ${String(err).slice(0, 200)}`);
       console.log('  Falling back to single-photo post…');
       try {
-        fbPostId = await publishSinglePhotoPost(env, images[0]!, message);
+        publishResult = await publishSinglePhotoPost(env, images[0]!, message);
         postedKind = 'photo';
       } catch (err2) {
         // Both attempts failed. Product already marked used (claim above) so
@@ -272,16 +363,19 @@ async function main() {
       throw err;
     }
   }
-  console.log(`  fb_post_id: ${fbPostId} (${postedKind})`);
+  const fbPostId = publishResult.mediaId;
+  const wallPostId = publishResult.wallPostId;
+  console.log(`  fb_post_id: ${fbPostId} (${postedKind}), wall_post_id: ${wallPostId ?? 'null'}`);
 
-  console.log('[4/5] Recording fb_post_id + posted_kind (used_count already claimed)…');
+  console.log('[4/5] Recording fb_post_id + fb_wall_post_id + posted_kind…');
   await d1Query(
     env,
     `UPDATE affiliate_products
         SET posted_kind = ?,
-            fb_post_id = ?
+            fb_post_id = ?,
+            fb_wall_post_id = ?
       WHERE id = ?`,
-    [postedKind, fbPostId, row.id],
+    [postedKind, fbPostId, wallPostId, row.id],
   );
 
   await tgSend(
